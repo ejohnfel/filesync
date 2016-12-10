@@ -1,0 +1,141 @@
+#!/bin/bash
+
+preserve="no"
+excludes=""
+operation="sync"
+simulate="no"
+source=""
+destination=""
+
+#
+# Required Items
+# 1. Exclusion file
+#
+
+# Usage
+function Usage()
+{
+	echo -e "filesync Usage"
+	echo -e "=============="
+	echo -e "filesync [options] src dest"
+	echo -e "-e\tExclusion regular expressions file"
+	echo -e "-o\tOperation (sync|remove)"
+	echo -e "-s\tSimulate operation, output operations"
+	echo -e "-p\tPreserve checksum files"
+}
+
+# Get Tree List
+function GetTree()
+{
+	if [ "${excludes}" = "" ]; then
+		find "${1}" -readable -type f -exec md5sum \{\} \; 2> /dev/null > "${2}"
+	else
+		find "${1}" -readable -type f -exec md5sum \{\} \; 2> /dev/null | grep -v -f "${excludes}" > "${2}"
+	fi
+}
+
+# Sync Content
+function Sync()
+{
+	echo -e "Synching $1 with $2"
+
+	src=/tmp/src.${RANDOM}
+	dst=/tmp/dst.${RANDOM}
+
+	GetTree ${source} ${src}
+	GetTree ${destination} ${dst}
+
+	while read chksum file; do
+		grep ${chksum} ${dst} > /dev/null
+
+		if [ $? -ne 0 ]; then
+			filename=$(basename "${file}")
+			rpath=${file#$source}
+			dlen=$(( ${#destination} - 1 ))
+
+			if [ "${destination:${dlen}:1}" = "/" ]; then
+				destination="${destination%/}"
+			fi
+
+			if [ "${rpath:0:1}" = "/" ]; then
+				rpath="${rpath#/}"
+			fi
+
+			dn=$(dirname "/${rpath}")
+
+			if [ ${simulate} = yes ]; then
+				echo -e "missing,${chksum},${file},${destination},/${rpath}"
+				[ ! -e "${destination}/${rpath}" ] && echo -e  "Making - ${destination}${dn}"
+				echo -e "Copying ${filename} to ${destination}/${rpath}..."
+			else
+				[ ! -e "${destination}/${rpath}" ] && mkdir -p "${destination}${dn}"
+				echo -e "Copying ${filename} to ${destination}/${rpath}..."
+				cp "${file}" "${destination}/${rpath}"
+			fi
+		fi
+	done < ${src}
+
+	if [ ${preserve} = yes ]; then
+		mv ${src} ./source.sums
+		mv ${dst} ./destination.sums
+	else
+		[ -e "${src}" ] && rm "${src}"
+		[ -e "${dst}" ] && rm "${dst}"
+	fi
+}
+
+# Remove Duplicates
+function Remove()
+{
+	echo -e "Searching for duplicates in $2 using $1 as reference"
+
+	src=/tmp/src.${RANDOM}
+	dst=/tmp/dst.${RANDOM}
+
+	GetTree ${source} ${src}
+	GetTree ${destination} ${dst}
+
+#
+
+	if [ ${preserve} = yes ]; then
+		mv ${src} ./source.sums
+		mv ${dst} ./destination.sums
+	else
+		[ -e "${src}" ] && rm "${src}"
+		[ -e "${dst}" ] && rm "${dst}"
+	fi
+}
+
+
+#
+# Main Loop
+#
+
+# Parse Cmdline Args
+while [ ! "$1" = "" ]; do
+	case "$1" in
+	"-h")		Usage
+			exit 127 ;;
+	"-e")		excludes="$2"
+			shift 1 ;;
+	"-o")		operation="$2"
+			shift 1 ;;
+	"-s")		simulate="yes" ;;
+	"-p")		preserve="yes" ;;
+	*)		if [ "${source}" = "" ]; then
+				source="$1"
+			else
+				destination="$1"
+			fi ;;
+	esac
+
+	shift 1
+done
+
+case ${operation} in
+"sync")		Sync "${source}" "${destination}" ;;
+"remove")	Remove "${source}" "${destination}" ;;
+*)		echo -e "Unknown operation ${operation}"
+		exit 127 ;;
+esac
+
