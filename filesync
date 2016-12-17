@@ -19,7 +19,7 @@ function Usage()
 	echo -e "=============="
 	echo -e "filesync [options] src dest"
 	echo -e "-e\tExclusion regular expressions file"
-	echo -e "-o\tOperation (sync|remove)"
+	echo -e "-o\tOperation (sync|remove|output)"
 	echo -e "-s\tSimulate operation, output operations"
 	echo -e "-p\tPreserve checksum files"
 }
@@ -46,7 +46,7 @@ function Sync()
 	GetTree ${destination} ${dst}
 
 	while read chksum file; do
-		grep ${chksum} ${dst} > /dev/null
+		egrep "^${chksum}" ${dst} > /dev/null
 
 		if [ $? -ne 0 ]; then
 			filename=$(basename "${file}")
@@ -67,10 +67,12 @@ function Sync()
 				echo -e "missing,${chksum},${file},${destination},/${rpath}"
 				[ ! -e "${destination}/${rpath}" ] && echo -e  "Making - ${destination}${dn}"
 				echo -e "Copying ${filename} to ${destination}/${rpath}..."
+				echo "${chksum} ${file}" >> ${dst}
 			else
 				[ ! -e "${destination}/${rpath}" ] && mkdir -p "${destination}${dn}"
 				echo -e "Copying ${filename} to ${destination}/${rpath}..."
 				cp "${file}" "${destination}/${rpath}"
+				echo "${chksum} ${file}" >> ${dst}
 			fi
 		fi
 	done < ${src}
@@ -106,6 +108,36 @@ function Remove()
 	fi
 }
 
+# Create List of source files and any duplicates
+function CreateList()
+{
+	output="index.txt"
+	src=/tmp/src.${RANDOM}
+	dst=/tmp/dst.${RANDOM}
+	greptmp=/tmp/greptmp.${RANDOM}
+
+	[ -e ${output} ] && rm ${output}
+
+	GetTree ${destination} ${dst}
+	GetTree ${source} ${src}
+
+	while read chksum file; do
+		egrep "^${chksum}" ${dst} > ${greptmp}
+
+		if [ $? -eq 0 ]; then
+			dstsum=$(cat ${greptmp} | cut -d" " -f1)
+			dstfile=$(cat ${greptmp} | cut -d" " -f2)
+			echo "${chksum},${file},${dstfile},${dstsum}" >> ${output}
+		else
+			echo "${chksum},${file},nomatch,nomatch" >> ${output}
+		fi
+	done < ${src}
+
+	[ -e ${dst} ] && rm ${dst}
+	[ -e ${src} ] && rm ${src}
+	[ -e ${greptmp} ] && rm ${greptmp}
+}
+
 
 #
 # Main Loop
@@ -135,6 +167,7 @@ done
 case ${operation} in
 "sync")		Sync "${source}" "${destination}" ;;
 "remove")	Remove "${source}" "${destination}" ;;
+"output")	CreateList "${source}" "${destination}" ;;
 *)		echo -e "Unknown operation ${operation}"
 		exit 127 ;;
 esac
