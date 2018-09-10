@@ -419,6 +419,8 @@ function SearchFolderIndexes()
 
 	[ ${#targets[@]} -eq 0 ] && targets[0]="."
 
+	foundany=1
+
 	for ((index=0; index < ${#targets[@]}; ++index)); do
 		pushd "${targets[${index}]}" > /dev/null
 
@@ -438,6 +440,7 @@ function SearchFolderIndexes()
 			fi
 
 			if [ -s ${TMPGREP} ]; then
+				foundany=0
 				while read chksum file; do
 					echo -e "${chksum} ${folder}/${file}"
 				done < "${TMPGREP}"
@@ -449,6 +452,8 @@ function SearchFolderIndexes()
 		[ -e "${TMPGREP}" ] && rm "${TMPGREP}"
 		[ -e "${PATTERNFILE}" ] && rm "${PATTERNFILE}"
 	done
+
+	return ${foundany}
 }
 
 # MakeMasterIndex : Make master index of all indexes in a folder tree
@@ -695,14 +700,18 @@ done
 
 shift 1
 
+itemsfound=1
+
 case "${MODE}" in
 "-h"|"help")	Usage; exit 127 ;;
 "-c"|"create")	MakeFolderIndexes $* ;;
 "-u"|"update")	UpdateFolderIndex $* ;;
 "-s"|"search")	if [ "${*}" = "" ]; then
 			SearchFolderIndexes .
+			itemsfound=$?
 		else
 			SearchFolderIndexes $*
+			itemsfound=$?
 		fi ;;
 "-r"|"remove")	RemoveIndexes $* ;;
 "test")		TestFunc $* ;;
@@ -711,3 +720,5 @@ case "${MODE}" in
 "-v"|"version")	ShowVersion ;;
 "-sh"|"shell")	InteractiveShell $* ;;
 esac
+
+[ "${MODE}" = "-s" -o "${MODE}" = "search" ] && exit ${itemsfound}
