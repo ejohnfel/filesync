@@ -1,7 +1,7 @@
 #!/bin/bash
 
 VERMAJ="0"
-VERMIN="2d"
+VERMIN="2e"
 TIMESTAMP=$(date +%c)
 DEBUG="no"
 DEBUGFILE="/tmp/md5image.debug"
@@ -10,6 +10,9 @@ FOLDERINDEX=".md5index.gz"
 MODE="search"
 SILENT="no"
 DEPTH=""
+BUILDINDEX=0
+TMPCACHE="/tmp/cache.${RANDOM}"
+CACHE=/tmp/md5index.cache
 
 declare -a excludes
 declare -a patterns
@@ -35,6 +38,7 @@ function Usage()
 	echo -e "-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted"
 	echo -e "-r|remove [folder] ...\t\t\tRemove index(es)"
 	echo -e "-e [file]\t\t\t\tItems to exclude are in file"
+	echo -e "-ca [folder]\t\t\t\tBuild cache for faster usage"
 	echo -e "-ex|expr [file]\t\t\t\tItems to search for are in file"
 	echo -e "-debug\t\t\t\t\tTurn debug mode on"
 	echo -e "-n\t\t\t\t\tNo prompt mode"
@@ -51,6 +55,7 @@ function ShellUsage()
 	echo -e "update [folder]\t\t\tUpdate Index in supplied folder, if not supplied, current folder"
 	echo -e "remove [folder]\t\t\tRemove Indexes from supplied folder tree, if not supplied, current folder"
 	echo -e "search [folder] [pattern]\tSearch Indexes for pattern, if folder is not supplied, assume current folder"
+	echo -e "cache [folder]\t\t\tBuild a cache from the indexes in the folder structure for faster searching"
 	echo -e "rmi [file]\t\t\tRemove file, and update index"
 	echo -e "mvi [file] [dest]\t\tMove file, update source and destination indexes, if either folder has no index, no index is created or updated"
 	echo -e "cpi [file] [dest]\t\tCopy file to destination and update index, if there is no index, one will not be created"
@@ -607,6 +612,32 @@ function CopyToFolder()
 	UpdateIndexes "${abspathd}"
 }
 
+# BuildCache : Build a cache out of the indexes from a supplied folder and below that point
+function BuildCache()
+{
+	pushd "${1}" > /dev/null
+
+	find . -name "${FOLDERINDEX}" > "${CACHE}"
+	mapfile -t indexes < "${CACHE}"
+
+	if [ -d "${CACHE}" ]; then
+		rm "${CACHE}/*"
+	else
+		mkdir "${CACHE}"
+	fi
+
+	for ((index=0; index < ${#indexes}; ++index)); do
+		fname="${indexes[${index}]}"
+		parent=$(dirname "${indexes[${index}]}")
+
+		current="cache.${RANDOM}"
+		echo -e "${parent}" > "${CACHE}/${current}"
+		gzip -dc "${fname}" >> "${CACHE}/${current}"
+	done
+
+	popd > /dev/null
+}
+
 # Interactive Index Shell
 function InteractiveShell()
 {
@@ -637,6 +668,12 @@ function InteractiveShell()
 					RemoveIndexes .
 				else
 					eval RemoveIndexes ${first} ${second} ${remainder}
+				fi
+				;;
+		"cache")	if [ "${first}" = "" ]; then
+					BuildCache .
+				else
+					eval BuildCache ${first} ${second} ${remainder}
 				fi
 				;;
 		"rmi")		RemoveFromIndex ${first} ${second} ${remainder} ;;
@@ -684,6 +721,7 @@ while [ ! "${1}" = "" ]; do
 	"-v"|"version")	MODE="${1}"; break ;;
 	"duplicates")	MODE="${1}"; break ;;
 	"test")		MODE="${1}"; break ;;
+	"-ca")		MODE="${1}" break ;;
 	"-d"|"depth")
 		DEPTH="-maxdepth ${2}"; shift 1 ;;
 	"-n")	SILENT="yes" ;;
@@ -718,6 +756,7 @@ case "${MODE}" in
 "duplicates")	Duplicates $* ;;
 "-f"|"find")	FindIndexes $* ;;
 "-v"|"version")	ShowVersion ;;
+"-ca"|"cache")	BuildCache $* ;;
 "-sh"|"shell")	InteractiveShell $* ;;
 esac
 
