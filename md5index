@@ -57,6 +57,7 @@ function ShellUsage()
 	echo -e "remove [folder]\t\t\tRemove Indexes from supplied folder tree, if not supplied, current folder"
 	echo -e "search [folder] [pattern]\tSearch Indexes for pattern, if folder is not supplied, assume current folder"
 	echo -e "cache [folder]\t\t\tBuild a cache from the indexes in the folder structure for faster searching"
+	echo -e "removecache\t\t\tRemove master index cache"
 	echo -e "rmi [file]\t\t\tRemove file, and update index"
 	echo -e "mvi [file] [dest]\t\tMove file, update source and destination indexes, if either folder has no index, no index is created or updated"
 	echo -e "cpi [file] [dest]\t\tCopy file to destination and update index, if there is no index, one will not be created"
@@ -665,6 +666,7 @@ function InteractiveShell()
 					eval MakeMasterIndex ${first} ${second} ${remainder}
 				fi
 				;;
+		"removecache")	[ -e "${CACHE}" ] && rm "${CACHE}" ;;
 		"rmi")		RemoveFromIndex ${first} ${second} ${remainder} ;;
 		"mvi")		MoveFromFolder ${first} ${second} ${remainder} ;;
 		"cpi")		CopyToFolder ${first} ${second} ${remainder} ;;
