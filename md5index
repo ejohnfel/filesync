@@ -671,6 +671,7 @@ function InteractiveShell()
 		"rmi")		RemoveFromIndex ${first} ${second} ${remainder} ;;
 		"mvi")		MoveFromFolder ${first} ${second} ${remainder} ;;
 		"cpi")		CopyToFolder ${first} ${second} ${remainder} ;;
+		"duplicates")	Duplicates "${first}" "${second}" ${remainder} ;;
         	"quit"|"exit")
                 	break ;;
         	*)
