@@ -38,6 +38,7 @@ function Usage()
 	echo -e "-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted"
 	echo -e "-r|remove [folder] ...\t\t\tRemove index(es)"
 	echo -e "-m\t\t\t\t\tMake master index"
+	echo -e "-rc\t\t\t\tRemove master index"
 	echo -e "-e [file]\t\t\t\tItems to exclude are in file"
 	echo -e "-ex|expr [file]\t\t\t\tItems to search for are in file"
 	echo -e "-debug\t\t\t\t\tTurn debug mode on"
@@ -710,6 +711,8 @@ while [ ! "${1}" = "" ]; do
 	"duplicates")	MODE="${1}"; break ;;
 	"test")		MODE="${1}"; break ;;
 	"-m"|"cache")	MODE="${1}"; break ;;
+	"-rc"|"removecache")
+			MODE="${1}"; break ;;
 	"-d"|"depth")
 		DEPTH="-maxdepth ${2}"; shift 1 ;;
 	"-n")	SILENT="yes" ;;
@@ -749,6 +752,8 @@ case "${MODE}" in
 "-f"|"find")	FindIndexes $* ;;
 "-v"|"version")	ShowVersion ;;
 "-m"|"cache")	MakeMasterIndex $* ;;
+"-rc"|"removecache")
+		[ -e "${CACHE}" ] && rm "${CACHE}" ;;
 "-sh"|"shell")	InteractiveShell $* ;;
 esac
 
