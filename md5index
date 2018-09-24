@@ -449,7 +449,11 @@ function SearchFolderIndexes()
 			if [ -s ${TMPGREP} ]; then
 				foundany=0
 				while read chksum file; do
-					echo -e "${chksum} ${folder}/${file}"
+					if [ -e "${CACHE}" ]; then
+						printf "%s %s\n" "${chksum}" "${file}"
+					else
+						printf "%s %s/%s\n" "${chksum}" "${folder}" "${file}"
+					fi
 				done < "${TMPGREP}"
 
 				[ -e "${CACHE}" ] && break
