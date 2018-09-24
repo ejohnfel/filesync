@@ -13,6 +13,7 @@ DEPTH=""
 BUILDINDEX=0
 TMPCACHE="/tmp/cache.${RANDOM}"
 CACHE=/tmp/md5index.cache
+IGNORECACHE=no
 
 declare -a excludes
 declare -a patterns
@@ -515,7 +516,7 @@ function Duplicates()
 	declare -a duptmplist
 	declare -a matches
 
-	DebugMsg "Function Duplicates"
+	DebugMsgLine "Function Duplicates"
 
 	tmpdups="/tmp/tempdups.${RANDOM}"
 
@@ -699,6 +700,8 @@ else
 fi
 
 declare -a cmds
+
+[ -e "${CACHE}" ] && echo -e "Master Index exists, ${CACHE}, and will be used for searches"
 
 while [ ! "${1}" = "" ]; do
 	case "${1}" in
