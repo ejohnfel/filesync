@@ -37,8 +37,8 @@ function Usage()
 	echo -e "-u|update [folder] ...\t\t\tUpdate md5 index in this folder tree"
 	echo -e "-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted"
 	echo -e "-r|remove [folder] ...\t\t\tRemove index(es)"
+	echo -e "-m\t\t\t\t\tMake master index"
 	echo -e "-e [file]\t\t\t\tItems to exclude are in file"
-	echo -e "-ca [folder]\t\t\t\tBuild cache for faster usage"
 	echo -e "-ex|expr [file]\t\t\t\tItems to search for are in file"
 	echo -e "-debug\t\t\t\t\tTurn debug mode on"
 	echo -e "-n\t\t\t\t\tNo prompt mode"
@@ -438,7 +438,9 @@ function SearchFolderIndexes()
 			pfolder=$(dirname "${findex}")
 			folder=$(realpath "${pfolder}")
 
-			if [ -s "${PATTERNFILE}" ]; then
+			if [ -e "${CACHE}" -a -s "${PATTERNFILE}" ]; then
+				egrep -f "${PATTERNFILE}" "${CACHE}" > "${TMPGREP}"
+			elif [ -s "${PATTERNFILE}" ]; then
 				zcat "${findex}" | egrep -f "${PATTERNFILE}" > "${TMPGREP}"
 			else
 				zcat "${findex}" > "${TMPGREP}"
@@ -449,6 +451,8 @@ function SearchFolderIndexes()
 				while read chksum file; do
 					echo -e "${chksum} ${folder}/${file}"
 				done < "${TMPGREP}"
+
+				[ -e "${CACHE}" ] && break
 			fi
 		done
 
@@ -465,10 +469,14 @@ function SearchFolderIndexes()
 # Usage : MakeMasterIndex [root folder] [master index fname]
 function MakeMasterIndex()
 {
+	DebugMsgLine "Entering MakeMasterIndex"
+
 	if [ ! "${1}" = "" ]; then
 		declare -a indexes
 
-		masterindex=$(realpath "${2}")
+		DebugMsgLine "Commencing build of master index"
+
+		masterindex="${CACHE}"
 		tmpindex="/tmp/index.tmp.${RANDOM}"
 
 		pushd "${1}" > /dev/null
@@ -481,7 +489,7 @@ function MakeMasterIndex()
 			parent=$(dirname "${md5index}")
 
 			while read chksum file; do
-				printf "%s %s/%s\n" "${chksum}" "${parent}" "${file}" >> "${masterindex}"
+				echo -e "${chksum} ${parent}/${file}" >> "${masterindex}"
 			done < "${tmpindex}"
 		done
 
@@ -489,6 +497,8 @@ function MakeMasterIndex()
 
 		popd > /dev/null
 	fi
+
+	DebugMsgLine "Leaving MakeMasterIndex"
 }
 
 # Duplicates
@@ -612,32 +622,6 @@ function CopyToFolder()
 	UpdateIndexes "${abspathd}"
 }
 
-# BuildCache : Build a cache out of the indexes from a supplied folder and below that point
-function BuildCache()
-{
-	pushd "${1}" > /dev/null
-
-	find . -name "${FOLDERINDEX}" > "${CACHE}"
-	mapfile -t indexes < "${CACHE}"
-
-	if [ -d "${CACHE}" ]; then
-		rm "${CACHE}/*"
-	else
-		mkdir "${CACHE}"
-	fi
-
-	for ((index=0; index < ${#indexes}; ++index)); do
-		fname="${indexes[${index}]}"
-		parent=$(dirname "${indexes[${index}]}")
-
-		current="cache.${RANDOM}"
-		echo -e "${parent}" > "${CACHE}/${current}"
-		gzip -dc "${fname}" >> "${CACHE}/${current}"
-	done
-
-	popd > /dev/null
-}
-
 # Interactive Index Shell
 function InteractiveShell()
 {
@@ -671,9 +655,9 @@ function InteractiveShell()
 				fi
 				;;
 		"cache")	if [ "${first}" = "" ]; then
-					BuildCache .
+					MakeMasterIndex .
 				else
-					eval BuildCache ${first} ${second} ${remainder}
+					eval MakeMasterIndex ${first} ${second} ${remainder}
 				fi
 				;;
 		"rmi")		RemoveFromIndex ${first} ${second} ${remainder} ;;
@@ -721,7 +705,7 @@ while [ ! "${1}" = "" ]; do
 	"-v"|"version")	MODE="${1}"; break ;;
 	"duplicates")	MODE="${1}"; break ;;
 	"test")		MODE="${1}"; break ;;
-	"-ca")		MODE="${1}" break ;;
+	"-m"|"cache")	MODE="${1}"; break ;;
 	"-d"|"depth")
 		DEPTH="-maxdepth ${2}"; shift 1 ;;
 	"-n")	SILENT="yes" ;;
@@ -736,9 +720,13 @@ while [ ! "${1}" = "" ]; do
 	shift 1
 done
 
+DebugMsgLine "Finished processing Cmdline Args"
+
 shift 1
 
 itemsfound=1
+
+DebugMsgLine "Starting to process ${MODE}"
 
 case "${MODE}" in
 "-h"|"help")	Usage; exit 127 ;;
@@ -756,7 +744,7 @@ case "${MODE}" in
 "duplicates")	Duplicates $* ;;
 "-f"|"find")	FindIndexes $* ;;
 "-v"|"version")	ShowVersion ;;
-"-ca"|"cache")	BuildCache $* ;;
+"-m"|"cache")	MakeMasterIndex $* ;;
 "-sh"|"shell")	InteractiveShell $* ;;
 esac
 
