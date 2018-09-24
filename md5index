@@ -453,7 +453,7 @@ function SearchFolderIndexes()
 				foundany=0
 				while read chksum file; do
 					if [ -e "${CACHE}" ]; then
-						printf "%s %s\n" "${chksum}" "${file}"
+						printf "%s %s \t(from ${CACHE})\n" "${chksum}" "${file}"
 					else
 						printf "%s %s/%s\n" "${chksum}" "${folder}" "${file}"
 					fi
@@ -700,8 +700,6 @@ else
 fi
 
 declare -a cmds
-
-[ -e "${CACHE}" ] && echo -e "Master Index exists, ${CACHE}, and will be used for searches"
 
 while [ ! "${1}" = "" ]; do
 	case "${1}" in
