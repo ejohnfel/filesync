@@ -355,7 +355,7 @@ function UpdateFolderIndex()
 						file="${listing[${findex}]}"
 
 						if [ -f "${file}" ]; then
-							grep "${file}" "${TMPNEWINDEX}" > /dev/null
+							grep -F "${file}" "${TMPNEWINDEX}" > /dev/null
 
 							if [ $? -ne 0 ]; then
 								DebugMsgLine "Checksumming : ${file}"
