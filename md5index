@@ -76,10 +76,10 @@ def ShellUsage():
 	print("remove [folder]\t\t\tRemove indexes from supplied folder tree, otherwise from current folder tree")
 	print("search [folder] [pattern]\tSearch indexes for pattern, if folder is not supplied, use current")
 	print("cache [folder]\t\t\tBuild a cache from the indexes in the folder structure")
-	print("removecache\t\t\tRemove master index cache")
-	print("rmi [file]\t\t\tRemove file and update index]")
-	print("mvi [file] [dest]\t\tMove file, update source and destination indexes")
-	print("cpi [file] [dest]\t\tCopy file, update destination index")
+	print("rmcache\t\t\tRemove master index cache")
+	#print("rmi [file]\t\t\tRemove file and update index]")
+	#print("mvi [file] [dest]\t\tMove file, update source and destination indexes")
+	#print("cpi [file] [dest]\t\tCopy file, update destination index")
 	print("help\t\t\t\tThis message")
 	print("quit|exit\t\t\tExit shell")
 
@@ -786,13 +786,41 @@ function CopyToFolder()
 
 # InteractiveShell : Interactive Processing Shell
 def InteractiveShell():
-        cmd="nop"
+         while True:
+                sys.stdout.write("> ")
+                cmd = sys.stdin.readline().strip()
+                args = cmd.split(" ")
 
-        while not cmd = "quit":
-                cmd = sys.stdin.readline()
+                if len(args) == 1:
+                        args.append(".")
 
-                
-
+                if args[0] == "quit":
+                        break
+                elif args[0] == "cd":
+                        os.chdir(args[1])
+                elif args[0] == "create":
+                        CreateFolderIndexes(args[1])
+                elif args[0] == "update":
+                        UpdateFolderIndexes(args[1])
+                elif args[0] == "search":
+                        SearchFolderIndexes(args[1])
+                elif args[0] == "remove":
+                        RemoveIndexes(args[1])
+                elif args[0] == "list":
+                        ListIndexes(args[1])
+                elif args[0] == "find":
+                        FindIndexes(args[1])
+                elif args[0] == "cache":
+                        MakeMasterIndex(args[1])
+                elif args[0] == "rmcache":
+                        RemoveIndexCache(args[1])
+                elif args[0] == "dup":
+                        FindDuplicates(args[1])
+                elif args[0] == "help":
+                        ShellUsage()
+                elif args[0] == "clear":
+                        subprocess.check_output("clear", shell=True)
+                        
 '''
 # Interactive Index Shell
 function InteractiveShell()
@@ -983,6 +1011,8 @@ elif args.rmcache:
 elif args.dup:
         for folder in args.folders:
                 FindDuplicates(folder)
+elif args.shell:
+        InteractiveShell()
 
 DebugMsg("Finished processing args")
 
