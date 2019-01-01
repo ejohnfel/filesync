@@ -1,600 +1,754 @@
-#!/bin/bash
+#!/usr/bin/python
+import io
+import os
+import gzip
+import sys
+import datetime
+import random
+import string
+import shutil
+import subprocess
+import argparse
+import re
+
+'''
+Index format
+Last_Mod_Timestamp last_size_in_bytes md5hash fullpath
+
+Master Index Format
+Same as Index format, except, the start of each added index includes a index marker of the following format.
+
+from [start|end] path_where_index_came_from
+'''
+
+random.seed()
 
 VERMAJ="0"
-VERMIN="2e"
-TIMESTAMP=$(date +%c)
-DEBUG="no"
-DEBUGFILE="/tmp/md5image.debug"
-VERBOSE="no"
+VERMIN="2ep"
+TIMESTAMPFORMAT="%c"
+TIMESTAMP=datetime.datetime.now().strftime(TIMESTAMPFORMAT)
+DEBUG=False
+DEBUGFILE="/tmp/md5index.debug"
+VERBOSE=False
 FOLDERINDEX=".md5index.gz"
 MODE="search"
-SILENT="no"
-DEPTH=""
+SILENT=False
+SHELLMODE=False
+DEPTH=-1
 BUILDINDEX=0
-TMPCACHE="/tmp/cache.${RANDOM}"
-CACHE=/tmp/md5index.cache
-IGNORECACHE=no
+TMPCACHE="/tmp/md5index.tmp.cache." + str(random.randint(0,65535))
+CACHE="/tmp/md5index.cache"
+IGNORECACHE=False
 
-declare -a excludes
-declare -a patterns
+excludes = [ FOLDERINDEX, ".git", ".compiz", ".config", ".dbus", ".gconf", ".gnome2", ".gnome2_private", ".gvfs", ".hplip", ".local", ".salt", ".ssh", "System Volume Information", r"lost+found", r"$RECYCLE.BIN" ]
+patterns = [ ]
 
-excludes=(".git" ".compiz" ".config" ".dbus" ".gconf" ".gnome2" ".gnome2_private" ".gvfs" ".hplip" ".local" ".nano" ".salt" ".ssh")
-patterns=()
+# ShowVersion : Show Version Information [COMPLETED/Tested]
+# Usage : ShowVersion()
+def ShowVersion():
+	print("Version " + VERMAJ + "." + VERMIN)
 
-# ShowVersion
-function ShowVersion()
-{
-	echo -e "Version ${VERMAJ}.${VERMIN}"
-}
+# Usage [OBSOLETE???]
+def Usage():
+	print("md5index Usage (" + VERMAJ + "." + VERMIN + ") :")
+	print("======================")
+	print("General Usage\t\t\t\tmd5index [options] [cmd] [targets]")
+	print("-h|help\t\t\t\t\tThis message")
+	print("-c|create [folder] ...\t\t\tCreate md5 index in this folder tree")
+	print("-u|update [folder] ...\t\t\tUpdate md5 index in this folder tree")
+	print("-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted")
+	print("-r|remove [folder ...\t\t\tRemove index(es)")
+	print("-m\t\t\t\t\tMake master index")
+	print("-rc\t\t\t\t\tRemove master index")
+	print("-e [file]\t\t\t\tItems to exclude are in file")
+	print("-ex|expr [file]\t\t\t\tItems to search for are in file")
+	print("-debug\t\t\t\t\tTurn on debug mode")
+	print("-n\t\t\t\t\tNo prompt mode")
+	print("shell [folder]\t\t\t\tExecute interactive index shell")
 
-# Usage
-function Usage()
-{
-	echo -e "md5index Usage (${VERMAJ}.${VERMIN}) :"
-	echo -e "==================="
-	echo -e "General Usage\t\t\t\tmd5index [options] [cmd] [targets]"
-	echo -e "-h|help\t\t\t\t\tThis messge"
-	echo -e "-c|create [folder] ...\t\t\tCreate md5 index in this folder tree"
-	echo -e "-u|update [folder] ...\t\t\tUpdate md5 index in this folder tree"
-	echo -e "-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted"
-	echo -e "-r|remove [folder] ...\t\t\tRemove index(es)"
-	echo -e "-m\t\t\t\t\tMake master index"
-	echo -e "-rc\t\t\t\tRemove master index"
-	echo -e "-e [file]\t\t\t\tItems to exclude are in file"
-	echo -e "-ex|expr [file]\t\t\t\tItems to search for are in file"
-	echo -e "-debug\t\t\t\t\tTurn debug mode on"
-	echo -e "-n\t\t\t\t\tNo prompt mode"
-	echo -e "shell [folder]\t\t\t\tExecute interactive index shell"
-}
-
-# ShellUsage :
+# ShellUsage : Show Shell Commands and Usage [INPROGRESS]
 # Usage : ShellUsage
-function ShellUsage()
-{
-	echo -e "Shell Usage (${VERMAJ}.${VERMIN})"
-	echo -e "================"
-	echo -e "create [folder]\t\t\tCreate Index in supplied folder, if not supplied, current folder"
-	echo -e "update [folder]\t\t\tUpdate Index in supplied folder, if not supplied, current folder"
-	echo -e "remove [folder]\t\t\tRemove Indexes from supplied folder tree, if not supplied, current folder"
-	echo -e "search [folder] [pattern]\tSearch Indexes for pattern, if folder is not supplied, assume current folder"
-	echo -e "cache [folder]\t\t\tBuild a cache from the indexes in the folder structure for faster searching"
-	echo -e "removecache\t\t\tRemove master index cache"
-	echo -e "rmi [file]\t\t\tRemove file, and update index"
-	echo -e "mvi [file] [dest]\t\tMove file, update source and destination indexes, if either folder has no index, no index is created or updated"
-	echo -e "cpi [file] [dest]\t\tCopy file to destination and update index, if there is no index, one will not be created"
-	echo -e "help\t\t\t\tThis message"
-	echo -e "quit|exit\t\t\tExit shell"
-}
-
-# DebugMsg
-# Usage : DebugMsg [message]
-function DebugMsg()
-{
-	TIMESTAMP=$(date +%c)
-
-	if [ "${1}" = "yes" ]; then
-		shift 1
-		message="${TIMESTAMP} : ${*}"
-	elif [ "${1}" = "no" ]; then
-		shift 1
-		message="${*}"
-	else
-		message="${TIMESTAMP} : ${*}"
-	fi
-
-	if [ "${DEBUG}" = "y" -o "${DEBUG}" = "yes" ]; then
-		[ "${SILENT}" = "no" ] && echo -en "${message}"
-		echo -en "${message}" >> "${DEBUGFILE}"
-	fi
-}
-
-# DebugMsgLine
-# Usage : DebugMsgLine [message]
-function DebugMsgLine()
-{
-	TIMESTAMP=$(date +%c)
-
-	if [ "${1}" = "yes" ]; then
-		shift 1
-		message="${TIMESTAMP} : ${*}"
-	elif [ "${1}" = "no" ]; then
-		shift 1
-		message="${*}"
-	else
-		message="${TIMESTAMP} : ${*}"
-	fi
-
-	if [ "${DEBUG}" = "y" -o "${DEBUG}" = "yes" ]; then
-		[ "${SILENT}" = "no" ] && echo -e "${message}"
-		echo -e "${message}" >> "${DEBUGFILE}"
-	fi
-}
-
-# Load Search Expressions
-# Usage : LoadExpressions {file}
-function LoadExpressions()
-{
-	mapfile -t -O ${#patterns[@]} patterns < "${1}"
-}
-
-# Load Excludes
-# Usage : LoadExcludes {exclude file}
-function LoadExcludes()
-{
-	mapfile -t -O ${#excludes[@]} excludes < "${1}"
-}
-
-# Check Exclude List
-# Usage : Excluded {item}
-function Excluded()
-{
-	if [ ! "${1}" = "" ]; then
-		for ((index=0; index < ${#excludes[@]}; ++index)); do
-			abspath=$(realpath "${1}")
-			target=$(basename "${abspath}")
-
-			[ "${excludes[${index}]}" = "${target}" ] && return 1
-		done
-	fi
-
-	return 0
-}
-
-# FindIndexes : Find All Indexes in a given folder tree
-# Usage : FindIndexes {folder1} {folder2}
-function FindIndexes()
-{
-	while [ ! "${1}" = "" ]; do
-		abspath=$(realpath "${1}")
-
-		pushd "${abspath}" > /dev/null
-
-		mapfile -t indexes < <(find . ${DEPTH} -name "${FOLDERINDEX}" -type f)
-
-		for ((index=0; index < ${#indexes[@]}; ++index)); do
-			abspath=$(realpath "${indexes[${index}]}")
-
-			echo -e "${abspath}"
-		done
-
-		popd > /dev/null
-
-		shift 1
-	done
-}
-
-# RemoveIndexes : Remove All Indexes
-# Usage : RemoveIndexes {folder} ...
-function RemoveIndexes()
-{
-	while [ ! "${1}" = "" ]; do
-		pushd "${1}" > /dev/null
-
-		mapfile -t indexes < <(find . ${DEPTH} -name "${FOLDERINDEX}" -type f)
-
-		for ((index=0; index < ${#indexes[@]}; ++index)); do
-			item="${indexes[${index}]}"
-
-			flag="n"
-
-			if [ "${SILENT}" = "no" ]; then
-				read -p "Delete ${item} (y/n)? " flag
-			else
-				flag="y"
-			fi
-
-			[ "${flag}" = "y" ] && rm "${item}"
-		done
-
-		popd > /dev/null
-
-		shift 1
-	done
-}
-
-# Marked
-# MkTempIndex : Make Temporary Index file
-# Usage : MkTempIndex {folder} {tmpfile}
-function MkTempIndex()
-{
-	pushd "${1}" > /dev/null
-
-	gzip -dc "${FOLDERINDEX}" > "${2}"
-
-	popd > /dev/null
-}
-
-# Marked
-# AddToFolderTmpIndex
-# Usage : AddToFolderTmpIndex {file to add} {newindextmpfile}
-function AddToFolderTmpIndex()
-{
-	Excluded "${1}"
-
-	if [ $? -eq 0 ]; then
-		md5sum "${1}" >> "${2}"
-	fi
-}
-
-# Mkmd5Index : Make md5 Index inside the current folder
-# Usage : Mkmd5Index
-function MkMD5Index()
-{
-	local -a files
-	local -a sums
-
-	mapfile -t files < <(ls -1)
-
-	for ((fileIndex=0; fileIndex < ${#files[@]}; ++fileIndex)); do
-		fop="${files[${fileIndex}]}"
-
-		if [ -f "${fop}" ]; then
-			DebugMsgLine "Hashing : ${fop}"
-			sums[${#sums[@]}]=$(md5sum "${fop}")
-		fi
-	done
-
-	if [ ${#sums[@]} -gt 0 ]; then
-		SKIPME=0
-		DebugMsgLine "Creating/Replacing ${FOLDERINDEX}"
-		if [ -e "${FOLDERINDEX}" ]; then
-			if [ -w "${FOLDERINDEX}" ]; then
-				rm "${FOLDERINDEX}"
-			else
-				echo -e "${FOLDERINDEX} exists and is not removable"
-				SKIPME=1
-			fi
-		else
-			TMP=${RANDOM}
-
-			touch ${TMP} > /dev/null 2>&1
-
-			if [ ! $? -eq 0 ]; then
-				echo -e "${FOLDERINDEX} is not writable"
-				SKIPME=1
-			else
-				rm ${TMP}
-			fi
-		fi
-
-		if [ ${SKIPME} -eq 0 ]; then
-			for ((sumIndex=0; sumIndex < ${#sums[@]}; ++sumIndex)); do
-				echo "${sums[${sumIndex}]}"
-			done | gzip -c > "${FOLDERINDEX}"
-		fi
-	fi
-}
-
-# MakeFolderIndexes : Make Folder Index
-# Usage : MakeFolderIndexes {folder} ...
-function MakeFolderIndexes()
-{
-	local -a items
-
-	while [ ! "${1}" = "" ]; do
-		if [ -d "${1}" ]; then
-			ABSPATH=$(realpath "${1}")
-
-			echo "${ABSPATH}"
-
-			mapfile -t items < <(find "${ABSPATH}" ${DEPTH} -type d)
-
-			for ((folderIndex=0; folderIndex < ${#items[@]}; ++folderIndex)); do
-				folder="${items[${folderIndex}]}"
-
-				DebugMsgLine "Processing : ${folder} - ${folderIndex}"
-
-				pushd "${folder}" > /dev/null
-
-				MkMD5Index
-
-				popd > /dev/null
-			done
-		fi
-
-		shift 1
-	done
-}
-
-# AddToFolderIndex
-# Usage : AddToFolderIndex {file} {folder-optional}
-function AddToFolderIndex()
-{
-	TMPINDEX="/tmp/tmpindex.${RANDOM}"
-
-	[ ! "${2}" = "" ] && pushd "${2}" > /dev/null
-
-	if [ -e "${1}" ]; then
-		if [ -e "${FOLDERINDEX}" ]; then
-			zcat "${FOLDERINDEX}" > "${TMPINDEX}"
-		fi
-
-		AddToFolderTmpIndex "${1}" "${TMPINDEX}"
-
-		rm "${FOLDERINDEX}"
-		gzip -c "${TMPINDEX}" > "${FOLDERINDEX}"
-	else
-		echo -e "File not found"
-	fi
-
-	[ -e "${TMPINDEX}" ] && rm "${TMPINDEX}"
-
-	[ ! "${2}" = "" ] && popd > /dev/null
-}
-
-# UpdateFolderIndex : Update Folder Index
-# Usage : UpdateFolderIndex {folder} ...
-function UpdateFolderIndex()
-{
-	while [ ! "${1}" = "" ]; do
-		if [ -d "${1}" ]; then
-			mapfile -t folders < <(find "${1}" ${DEPTH} -type d)
-
-			for ((index=0; index < ${#folders[@]}; ++index)); do
-				folder="${folders[${index}]}"
-
-				DebugMsgLine "Processing : ${folder}"
-				pushd "${folder}" > /dev/null
-
-				if [ -f "${FOLDERINDEX}" ]; then
-					TMPINDEX="/tmp/index.tmp.${RANDOM}"
-					TMPNEWINDEX="${TMPINDEX}.new"
-
-					zcat "${FOLDERINDEX}" > "${TMPINDEX}"
-					mapfile -t listing < <(ls -1)
-
-					touch "${TMPNEWINDEX}"
-
-					while read chksum file; do
-						if [ -e "${file}" ]; then
-							echo "${chksum} ${file}" >> "${TMPNEWINDEX}"
-						fi
-					done < "${TMPINDEX}"
-
-					for ((findex=0; findex < ${#listing[@]}; ++findex)); do
-						file="${listing[${findex}]}"
-
-						if [ -f "${file}" ]; then
-							grep -F "${file}" "${TMPNEWINDEX}" > /dev/null
-
-							if [ $? -ne 0 ]; then
-								DebugMsgLine "Checksumming : ${file}"
-								md5sum "${file}" >> ${TMPNEWINDEX}
-							fi
-						fi
-					done
-
-					# Test for changed
-					DebugMsg yes "Testing for changes in index : "
-					orig=$(md5sum "${TMPINDEX}" | cut -d" " -f1)
-					newin=$(md5sum "${TMPNEWINDEX}" | cut -d" " -f1)
-
-					if [ -s "${TMPNEWINDEX}" -a ! ${orig} = ${newin} ]; then
-						DebugMsgLine no "And there are changes"
-						[ -e "${FOLDERINDEX}" ] && rm "${FOLDERINDEX}"
-						cat "${TMPNEWINDEX}" | gzip > "${FOLDERINDEX}"
-					else
-						DebugMsgLine no "And there were NO changes"
-						touch "${FOLDERINDEX}"
-					fi
-
-					[ -e "${TMPINDEX}" ] && rm "${TMPINDEX}"
-					[ -e "${TMPNEWINDEX}" ] && rm "${TMPNEWINDEX}"
-				else
-					MkMD5Index .
-				fi
-
-				popd > /dev/null
-			done
-		fi
-
-		shift 1
-	done
-}
-
-# SearchFolderIndexes : Search folder indexes for patterns
-# Usage : SearchFolderIndexes {folder} {pattern} ...
-function SearchFolderIndexes()
-{
-	PATTERNFILE="/tmp/patterns.${RANDOM}"
-	TMPGREP="/tmp/grep.${RANDOM}"
-
-	local -a targets
-
-	for ((count=0; count < ${#patterns[@]}; ++count)); do
-		pattern="${patterns[${count}]}"
-		if [ -f "${pattern}" ]; then
-			cat "${pattern}" >> "${PATTERNFILE}"
-		else
-			echo "${pattern}" >> "${PATTERNFILE}"
-		fi
-	done
-
-	while [ ! "${1}" = "" ]; do
-		if [ -d "${1}" ]; then
-			targets[${#targets[@]}]="${1}"
-		elif [ -f "${1}" ]; then
-			# Add both name and MD5SUM so we can possibly locate either
-			sum=$(md5sum "${1}")
-			echo "${sum}" >> "${PATTERNFILE}"
-			echo "${1}" >> "${PATTERNFILE}"
-		else
-			echo "${1}" >> "${PATTERNFILE}"
-		fi
-
-		shift 1
-	done
-
-	[ ${#targets[@]} -eq 0 ] && targets[0]="."
-
-	foundany=1
-
-	for ((index=0; index < ${#targets[@]}; ++index)); do
-		pushd "${targets[${index}]}" > /dev/null
-
-		mapfile -t < <(find . ${DEPTH} -name "${FOLDERINDEX}")
-
-		count=${#MAPFILE[@]}
-
-		for ((item=0; item < ${count}; ++item)); do
-			findex="${MAPFILE[${item}]}"
-			pfolder=$(dirname "${findex}")
-			folder=$(realpath "${pfolder}")
-
-			if [ -e "${CACHE}" -a -s "${PATTERNFILE}" ]; then
-				egrep -f "${PATTERNFILE}" "${CACHE}" > "${TMPGREP}"
-			elif [ -s "${PATTERNFILE}" ]; then
-				zcat "${findex}" | egrep -f "${PATTERNFILE}" > "${TMPGREP}"
-			else
-				zcat "${findex}" > "${TMPGREP}"
-			fi
-
-			if [ -s ${TMPGREP} ]; then
-				foundany=0
-				while read chksum file; do
-					if [ -e "${CACHE}" ]; then
-						printf "%s %s \t(from ${CACHE})\n" "${chksum}" "${file}"
-					else
-						printf "%s %s/%s\n" "${chksum}" "${folder}" "${file}"
-					fi
-				done < "${TMPGREP}"
-
-				[ -e "${CACHE}" ] && break
-			fi
-		done
-
-		popd > /dev/null
-
-		[ -e "${TMPGREP}" ] && rm "${TMPGREP}"
-		[ -e "${PATTERNFILE}" ] && rm "${PATTERNFILE}"
-	done
-
-	return ${foundany}
-}
-
-# MakeMasterIndex : Make master index of all indexes in a folder tree
-# Usage : MakeMasterIndex [root folder] [master index fname]
-function MakeMasterIndex()
-{
-	DebugMsgLine "Entering MakeMasterIndex"
-
-	if [ ! "${1}" = "" ]; then
-		declare -a indexes
-
-		DebugMsgLine "Commencing build of master index"
-
-		masterindex="${CACHE}"
-		tmpindex="/tmp/index.tmp.${RANDOM}"
-
-		pushd "${1}" > /dev/null
-		mapfile -t indexes < <(find . -name "${FOLDERINDEX}")
-
-		for ((item=0; item < ${#indexes[@]}; ++item)); do
-			md5index=$(realpath "${indexes[${item}]}")
-
-			zcat "${md5index}" > "${tmpindex}"
-			parent=$(dirname "${md5index}")
-
-			while read chksum file; do
-				echo -e "${chksum} ${parent}/${file}" >> "${masterindex}"
-			done < "${tmpindex}"
-		done
-
-		[ -e "${tmpindex}" ] && rm "${tmpindex}"
-
-		popd > /dev/null
-	fi
-
-	DebugMsgLine "Leaving MakeMasterIndex"
-}
-
-# Duplicates
-# Usages : Duplicates [folder1]  ...
-function Duplicates()
-{
-	declare -a duplist
-	declare -a duptmplist
-	declare -a matches
-
-	DebugMsgLine "Function Duplicates"
-
-	tmpdups="/tmp/tempdups.${RANDOM}"
-
-	# If one folder, the user has selected to find any duplicates in that one folder tree
-	# So, we trick the code by making 2 items in list, both of which happen to be the same folder.
-	while [ ! "${1}" = "" ]; do
-		duplist[${#duplist[@]}]="${1}"
-		duptmplist[${#duptmplist[@]}]="/tmp/dup.${RANDOM}"
-		shift 1
-	done
-
-	# If the list is empty... there is no point in continuing.
-	if [ ${#duplist[@]} -gt 0 ]; then
-		if [ ${#duplist[@]} -eq 1 ]; then
-			duplist[1]="${duplist[0]}"
-			duptmplist[1]="/tmp/dup.${RANDOM}"
-		fi
-
-		# Search for dups...
-		# This assumes we are looking for dups in every folder but the first.
-
-		primaryindex="${duptmplist[0]}"
-		MakeMasterIndex "${duplist[0]}" "${primaryindex}"
-
-		for ((index=1; index < ${#duplist[@]}; ++index)); do
-			currentindex="${duptmplist[${index}]}"
-			MakeMasterIndex "${duplist[${index}]}" "${currentindex}"
-
-			while read chksum file; do
-				matched=false
-				if [ ${#matches[@]} -gt 0 ]; then
-					for ((match=0; match < ${#matches[@]}; ++match)); do
-						if [ "${file}" = "${matches[${match}]}" ]; then
-							matched=true
-							break
-						fi
-					done
-				fi
-
-				if [ ${matched} = false ]; then
-					grep -F "${chksum}" "${primaryindex}" | grep -v -F "${chksum} ${file}" > "${tmpdups}"
-
-					while read chksm fname; do
-						printf "%s,%s,%s\n" "${chksum}" "${fname}" "${file}"
-						matches[${#matches[@]}]="${fname}"
-					done < "${tmpdups}"
-				fi
-			done < "${currentindex}"
-
-			[ -e "${duptmplist[${index}]}" ] && rm "${duptmplist[${index}]}"
-		done
-
-		[ -e "${tmpdups}" ] && rm "${tmpdups}"
-		[ -e "${primaryindex}" ] && rm "${primaryindex}"
-	fi
-}
-
-# RemoveFromIndex :
-# Usage : RemoveFromIndex [src] ...
-function RemoveFromIndex()
-{
-	for item in $*; do
-		abspath=$(realpath "${item}")
-		parent=$(dirname "${abspath}")
-		filename=$(basename "${abspath}")
-
-		pushd "${parent}" > /dev/null
-
-		rm "${filename}"
-
-		if [ -e ${FOLDERINDEX} ]; then
-			UpdateFolderIndex .
-		fi
-
-		popd > /dev/null
-	done
-}
-
+def ShellUsage():
+	print("Shell Usage (" + VERMAJ + "." + VERMIN + ")")
+	print("===================")
+	print("create [folder]\t\t\tCreate index in supplied folder, otherwise in current folder")
+	print("update [folder]\t\t\tUpdate index in supplied folder, otherwise in current folder")
+	print("remove [folder]\t\t\tRemove indexes from supplied folder tree, otherwise from current folder tree")
+	print("search [folder] [pattern]\tSearch indexes for pattern, if folder is not supplied, use current")
+	print("cache [folder]\t\t\tBuild a cache from the indexes in the folder structure")
+	print("removecache\t\t\tRemove master index cache")
+	print("rmi [file]\t\t\tRemove file and update index]")
+	print("mvi [file] [dest]\t\tMove file, update source and destination indexes")
+	print("cpi [file] [dest]\t\tCopy file, update destination index")
+	print("help\t\t\t\tThis message")
+	print("quit|exit\t\t\tExit shell")
+
+# GetTimeStamp : Get properly formatted time stamp [COMPLETED/Tested]
+# Usage : GetTimeStamp()
+def GetTimeStamp():
+        global TIMESTAMPFORMAT
+        
+        return datetime.datetime.now().strftime(TIMESTAMPFORMAT)
+
+# TmpFilename : Generate Temp Filename [COMPLETED/Tested]
+def TmpFilename(targetDir="/tmp", prefix="md5index.tmp"):
+        flag = True
+
+        while flag:
+                randomExt = str(random.randint(0,65535))
+                tmpname = "{0}/{1}.{2}".format(targetDir,prefix,randomExt)
+
+                if not Exists(tmpname):
+                        flag = False
+
+        return tmpname
+
+# GetFolderContents : Get Folder Contents [COMPLETED/Tested]
+def GetFolderContents(folder):
+        folders = [ ]
+        files = [ ]
+        
+        contents = [ os.path.abspath(folder), folders, files ]
+
+        for item in os.listdir(folder):
+                base = os.path.basename(item)
+                absfolderpath = os.path.abspath(folder)
+                
+                abspath = os.path.join(absfolderpath,base)
+                
+                if os.path.isdir(abspath):
+                        folders.append(abspath)
+                elif os.path.isfile(abspath):
+                        files.append(abspath)
+
+        return contents
+
+# Exists : Check to see if file or folder exists [COMPLETED/Tested]
+# Usage : Exists(file|folder path)
+def Exists(item):
+        return os.path.exists(item)
+
+# HasIndex : Determine folder folder has an index
+def HasIndex(folder):
+        global FOLDERINDEX
+        
+        index = os.path.join(folder,FOLDERINDEX)
+
+        return Exists(index)
+
+# DebugMsg : Print a debugging message (and print to log) [COMPLETED/Tested]
+# Usage : DebugMsg(message,includetimestamp)
+def DebugMsg(message,includetimestamp=True):
+        global DEBUG, DEBUGFILE, SILENT
+        
+	TIMESTAMP=GetTimeStamp()
+
+        if not includetimestamp:
+                MSG=message
+        else:
+                MSG=TIMESTAMP + " " + message
+                
+        if DEBUG:
+                if not SILENT: print(MSG)
+                with open(DEBUGFILE,"a") as log:
+                        log.write("{0}\n".format(MSG))
+
+# LoadExpressions : Load Search Expressions [COMPLETED/Tested]
+# Usage : LoadExpressions(filename)
+def LoadExpressions(filename):
+        global patterns
+        
+        with open(filename,"r") as patternFile:
+                for line in patternFile:
+                        patterns.append(line.rstrip())
+
+# LoadExcludes : Load files/folders to exclude [COMPLETED/Tested]
+# Usage : LoadExcludes(filename)
+def LoadExcludes(filename):
+        global excludes
+
+        with open(filename,"r") as excludeFile:
+                  for line in excludeFile:
+                          excludes.append(line.rstrip())
+
+# Excluded : Check item against Exclude List [COMPLETED/Tested]
+# Usage : Excluded(item)
+def Excluded(item):
+        global excludes
+
+        flag = False
+        
+	if not item == "":
+                abspath=os.path.abspath(item)
+                target=os.path.basename(abspath)
+                
+                if target in excludes or item in excludes:
+                        flag = True
+
+	return flag
+
+# SearchBuffer : Search a buffer for a pattern [COMPLETED/Tested]
+def SearchBuffer(buffer,pattern,escapePattern=False):
+        found = False
+        
+        if escapePattern: pattern = re.escape(pattern)
+        
+        rexp = re.compile(pattern,re.IGNORECASE)
+
+        result = rexp.search(buffer)
+
+        if not result is None:
+                found = True
+
+        return found
+
+# UncompressedFileSearch : Search uncompressed file for pattern [COMPLETED/Tested]
+def UncompressedFileSearch(filename,pattern,escapePattern=False):
+        found = False
+        
+        with open(filename,"r",1048) as data:
+                for line in data:
+                        found = SearchBuffer(line,pattern,escapePattern)
+
+                        if found: break
+
+        return found
+
+# CompressedFileSearch : Search compressed file for pattern [COMPLETED/Tested]
+def CompressedFileSearch(archivename,pattern,escapePattern=False):
+        found = False
+
+        with gzip.open(archivename,"rb",1024) as archive:
+                for line in archive:
+                        found = SearchBuffer(line,pattern,escapePattern)
+
+                        if found: break
+                        
+        return found
+
+# DumpContents : Dump contents of file to console [COMPLETED/Tested]
+def DumpContents(filename):
+        rexp = re.compile(".gz$",re.IGNORECASE)
+        dataFile = None
+        
+        if not rexp.search(filename) is None:
+                dataFile = gzip.open(filename,"rb",1024)
+        else:
+                dataFile = open(filename,"r",1024)
+                
+        for line in dataFile:
+                print(str.strip(line))
+
+        dataFile.close()
+
+# Compress : Compress File [COMPLETED/Tested]
+def Compress(uncompressedFilename,compressedFilename,removeOriginal=True,removeArchive=True):
+        if Exists(compressedFilename) and removeArchive: os.remove(compressedFilename)
+
+        with open(uncompressedFilename,"r") as uncompressedFile, gzip.open(compressedFilename,"wb") as compressedFile:
+                shutil.copyfileobj(uncompressedFile,compressedFile,1024)
+
+        if removeOriginal:
+                os.remove(uncompressedFilename)
+
+# CompressIndex : Compress Index in Supplied Folder [COMPLETED/Tested]
+def CompressIndex(folder,tmpIndex,removeArchive=True):
+        global FOLDERINDEX
+
+        index=os.path.join(folder,FOLDERINDEX)
+        
+        Compress(tmpIndex,index,removeArchive)
+
+# Decompress : Decompress File [COMPLETED/Tested]
+def Decompress(compressedFilename,uncompressedFilename,removeArchive=True,mode="w",clearOriginal=False):
+        if Exists(uncompressedFilename) and clearOriginal: os.remove(uncompressedFilename)
+        
+        with open(uncompressedFilename,mode) as uncompressedFile, gzip.open(compressedFilename,"rb") as compressedFile:
+                shutil.copyfileobj(compressedFile,uncompressedFile,1024)
+
+        if removeArchive:
+                os.remove(compressedFilename)
+
+# DecompressIndex : Decompress Index in Supplied Folder [COMPLETED/Tested]
+def DecompressIndex(folder,tmpIndex,removeArchive=True,mode="w",clearOriginal=False):
+        global FOLDERINDEX
+
+        index=os.path.join(folder,FOLDERINDEX)
+
+        Decompress(index,tmpIndex,removeArchive,mode,clearOriginal)
+
+# FindIndexes : Find All Indexes in a given folder tree [COMPLETED/Tested]
+# Usage : FindIndexes(root)
+def FindIndexes(root,depth=-1):
+        global FOLDERINDEX
+
+        root, dirs, files = GetFolderContents(root)
+        
+        if not Excluded(root):
+                currentIndex = os.path.join(root,FOLDERINDEX)
+                
+                if Exists(currentIndex):
+                        print(currentIndex)
+
+                if depth < 0 or depth > 0:
+                        depth = depth - 1
+                        
+                        for subdir in dirs:
+                                FindIndexes(subdir,depth)
+
+# RemoveIndex : Remove Index From Supplied Folder (if it exists) [COMPLETED/Tested]
+def RemoveIndex(folder):
+        global FOLDERINDEX
+
+        currentIndex = os.path.join(folder,FOLDERINDEX)
+
+        if Exists(currentIndex):
+                os.remove(currentIndex)
+                
+# RemoveIndexes : Remove All Indexes [COMPLETED/Tested]
+def RemoveIndexes(root,depth=-1):        
+        if not Excluded(root):
+                root, dirs, files = GetFolderContents(root)
+
+                RemoveIndex(root)
+
+                if depth < 0 or depth > 0:
+                        depth = depth - 1
+                        for subdir in dirs:
+                                RemoveIndexes(subdir,depth)
+
+# MD5Hash : Get MD5 Hash of file [COMPLETED/Tested]
+def MD5Hash(filename):
+        cmd = "md5sum \"{0}\"".format(filename)
+        
+        output=subprocess.check_output(cmd, shell=True)
+        
+        return output.split()[0]
+
+# GetFileInfo : Get pertinant file info [COMPLETED/Tested]
+def GetFileInfo(filename):
+        mod_timestamp = datetime.datetime.fromtimestamp(os.path.getmtime(filename))
+        fsize = os.path.getsize(filename)
+
+        return [ mod_timestamp, fsize ]
+
+# HashEntrySet : Create a HashEntry for a list []
+def HashEntry(filename):
+        filehash = MD5Hash(filename)
+        mod_timestamp, fsize = GetFileInfo(filename)
+        
+        entry = [ mod_timestamp, fsize, filehash, filename ]
+
+        return entry
+
+# HashEntry : Create/Format Hash Entry [COMPLETED/Tested/OBSOLETE??]
+def HashEntryLine(filename):
+        filehash = MD5Hash(filename)
+        mod_timestamp, fsize = GetFileInfo(filename)
+                        
+        # Use datetime.datetime.strptime(date_string, format) to convert back to datetime object
+                        
+        return "{0} {1} {2} {3}\n".format(mod_timestamp,fsize,filehash,filename)
+
+# HashEntryToString : Convert HashEntry to string (useful for searches) [COMPLETED/Tested]
+def HashEntryToString(entry):
+        output = "{0} {1} {2} {3}".format(str(entry[0]), str(entry[1]), entry[2], entry[3])
+
+        return output
+
+# HashEntryToMasterEntry : Convert HashEntry To MasterEntry
+def HashEntryToMasterEntry(prefix,hashEntry):
+        masterEntry = [ prefix, hashEntry[0], hashEntry[1], hashEntry[2], hashEntry[3] ]
+
+        return masterEntry
+
+# MasterEntryToHashEntry : Convert MasterIndex Entry to HashEntry
+def MasterEntryToHashEntry(masterEntry):
+        hashEntry = [ masterEntry[1], masterEntry[2], masterEntry[3], masterEntry[4] ]
+
+        return hashEntry
+
+# ParseHashEntry : Parse Hash Entry into Tuple [COMPELTED/Tested]
+def ParseHashEntry(hashEntry):
+        # Format of entry
+        # [Mod time stamp] [file size] [hash] [file w/full path]
+        # Ex.
+        # 2018-09-24 11:40:49.954439 783 e532987abda7765c8620875d439dce7b /srv/storage/projects/scripts/filesync/README.md
+
+        # maxsplit = 4, because fnames make contain white space. This will parse date,time,size,hash and dump the remainder as one string
+        data = hashEntry.split(" ",4)
+
+        mod_timestamp = datetime.datetime.strptime("{0} {1}".format(data[0],data[1]),"%Y-%m-%d %H:%M:%S.%f")
+
+        entry = [ mod_timestamp, data[2], data[3], data[4].strip() ]
+
+        return entry
+
+# IsCacheMarker : Determines if line is a master cache marker line [COMPLETED/Tested]
+def IsCacheMarker(entry):
+        flag = re.match("^from (start|end)",entry,re.IGNORECASE)
+
+        return (not flag == None)
+        
+# IsStartCacheMarker : Determines if line is a master cache start marker line [COMPLETED/Tested]
+def IsStartCacheMarker(entry):
+        flag = re.match("^from start",entry,re.IGNORECASE)
+
+        return (not flag == None)
+
+# IsEndCacheMarker : Determines if line is a master cache end marker line [COMPLETED/Tested]
+def IsEndCacheMarker(entry):
+        flag = re.match("^from end",entry,re.IGNORECASE)
+
+        return (not flag == None)
+
+# LoadIndex : Load an index into memory [COMPLETED/Tested]
+def LoadIndex(folder):
+        global FOLDERINDEX
+        
+        entries = [ ]
+
+        target = os.path.join(folder,FOLDERINDEX)
+
+        with gzip.open(target,"rb") as index:
+                for line in index:
+                        entry = ParseHashEntry(str.strip(line))
+
+                        entries.append(entry)
+
+        return entries
+
+# SaveIndex : Save in memory index to folder [COMPLETED/Tested]
+def SaveIndex(entries,folder):
+        global FOLDERINDEX
+        
+        target = os.path.join(folder,FOLDERINDEX)
+
+        with gzip.open(target,"wb") as index:
+                for entry in entries:
+                        index.write("{0} {1} {2} {3}\n".format(entry[0],entry[1],entry[2],entry[3]))
+
+# LoadMasterIndex : Load Master index into memory [INCOMPLETE/Untested]
+def LoadMasterIndex(filename=None):
+        global CACHE
+        
+        entries = [ ]
+
+        if filename is None or filename == "":
+                filename = CACHE
+                
+        if Exists(filename):
+                with open(filename,"r") as masterindex:
+                        counter = 0
+                        for line in masterindex:
+                                if not IsCacheMarker(line):
+                                        entry = ParseHashEntry(line)
+
+                                        masterEntry = HashEntryToMasterEntry(counter,entry)
+
+                                        entries.append(masterEntry)
+                                        
+                                        counter = counter + 1
+
+        return entries
+
+# MkTmpIndex : Make temporary index (i.e. Uncompressed) [COMPLETED/Tested/OBSOLETE???]
+def MkTmpIndex(folder,files,tmpname,mode="w"):
+        with open(tmpname,mode) as index:
+                for item in files:                        
+                        target = os.path.join(folder,item)
+                        
+                        index.write(HashEntry(target))
+
+# MkIndex : Make Index [COMPLETE/Tested]
+def MkIndex(folder,files=None):
+        entries = [ ]
+
+        if files is None:
+                root, dirs, files = GetFolderContents(folder)
+        
+        for item in files:
+                target = os.path.join(folder,item)
+
+                if not Excluded(target):
+                        entries.append(HashEntry(target))
+
+        SaveIndex(entries,folder)
+        
+# CreateFolderIndexes : Create Folder Index(es) [COMPLETE/Tested]
+def CreateFolderIndexes(folder,depth=-1):
+        folder = os.path.abspath(folder)
+        
+        if not Excluded(folder):
+                root, dirs, files = GetFolderContents(folder)
+
+                MkIndex(root,files)
+
+                if depth < 0 or depth > 0:
+                        depth = depth - 1
+                        
+                        for subdir in dirs:
+                                CreateFolderIndexes(subdir,depth)
+
+# FindMatchingEntry : Find in memory index entry by file-path
+def FindMatchingEntry(index, filename):
+        item = None
+
+        for entry in index:
+                if entry[3] == filename:
+                        item = entry
+                        break
+        return item
+
+# AddToIndex : Add file into in memory index [COMPLETED]
+def AddToIndex(index,folder,item):
+        abspath = os.path.join(folder,item)
+
+        data = HashEntry(abspath)
+
+        index.append(data)
+
+# UpdateFolderIndex : Update folder index
+def UpdateFolderIndex(folder):
+        dirs = [ ]
+        
+        if not Excluded(folder):
+                if not HasIndex(folder):
+                        MkIndex(folder)
+                else:
+                        root, dirs, files = GetFolderContents(folder)
+
+                        removables = [ ]
+                        changes = False
+                        entries = LoadIndex(folder)
+                        indexFileEntries = [ ]
+                        
+                        # Create existence cache and remove non-existent entries
+                        for item in entries:
+                                filepath = item[3]
+
+                                if Exists(filepath):
+                                        indexFileEntries.append(filepath)
+                                else:
+                                        removables.append(item)
+
+                        # Hunt for new and modified files
+                        for item in files:
+                                if not Excluded(item):
+                                        base = os.path.basename(item)
+                                        absfolderpath = os.path.abspath(root)
+
+                                        fp = os.path.join(absfolderpath,base)
+
+                                        if not fp in indexFileEntries:  # New/Add
+                                                changes = True
+                                                AddToIndex(entries,absfolderpath,base)
+                                        else:                           # Check for mods
+                                                mod_timestamp, fsize = GetFileInfo(fp)
+
+                                                entry = FindMatchingEntry(entries,fp)
+                
+                                                if not (int(entry[1]) == fsize and entry[0] == mod_timestamp):
+                                                        changes = True
+                                                        entries.remove(entry)
+                                                        AddToIndex(entries,absfolderpath,base)
+
+                        # Remove entries marked for deletion
+                        for entry in removables:
+                                changes = True
+                                entries.remove(entry)
+
+                        if changes:
+                                SaveIndex(entries,absfolderpath)
+
+        return dirs
+
+# UpdateFolderIndexes : Update folder indexes
+def UpdateFolderIndexes(folder,depth=-1):
+        dirs = UpdateFolderIndex(folder)
+
+        if depth > -1:
+                depth = depth - 1
+                
+        for subdir in dirs:
+                UpdateFolderIndexes(subdir, depth)
+
+# ListIndex : List contents of index in folder [COMPLETED/Tested]
+def ListIndex(folder,tmpfile="",mode="w",masterindex=False):
+        global FOLDERINDEX
+
+        DebugMsg("Entering ListIndex")
+        
+        index=os.path.join(folder,FOLDERINDEX)
+
+        if Exists(index):
+                if tmpfile == "":
+                        tmpname = TmpFilename(prefix="md5index.listing")
+                else:
+                        tmpname = tmpfile
+
+                # Prep MasterIndex Items
+                found = False
+                header = "from start {0}\n".format(folder)
+
+                # Assurance that mode is not set to, or left to default "w" by absentminded programmer
+                if masterindex: mode = "a"
+
+                # If master index enabled, search master index cache for existing entry
+                if masterindex and Exists(tmpname):
+                        found = UncompressedFileSearch(tmpname,"^{0}".format(re.escape(header)))
+
+                # If masterindex enabled and folder directive is not found, then add marker to master index cache
+                if masterindex and not found:
+                        with open(tmpname,"a") as mi: mi.write(header)
+
+                # If not masterindex enabled, dump to index file regardless. If masterindex enabled and folder not found, dump index
+                if not masterindex or (masterindex and not found):
+                        DecompressIndex(folder,tmpname,False,mode)
+
+                # If masterindex enabled and not found, add parting marker
+                if masterindex and not found:
+                        with open(tmpname,"a") as mi: mi.write("from end {0}\n".format(folder))
+                
+                if tmpfile == "":
+                        DumpContents(tmpname)
+                        os.remove(tmpname)
+
+        DebugMsg("Exitting ListIndex")
+        
+# ListIndexes : List contents of indexes in tree [COMPLETED/Tested]
+def ListIndexes(folder,tmpfile="",mode="w",depth=-1,masterindex=False):
+        DebugMsg("Entering ListIndexes")
+        
+        root, dirs, files = GetFolderContents(folder)
+
+        if not Excluded(root) and (depth > 0 or depth == -1):        
+                ListIndex(root,tmpfile,mode,masterindex)
+
+                if depth > 0:
+                        depth = depth - 1
+
+                for subdir in dirs:
+                        ListIndexes(subdir,tmpfile,mode,depth,masterindex)
+                                
+        DebugMsg("Exitting ListIndexes")
+
+# MakeMasterIndex : Make the master index/cache [COMPLETED/Tested]
+def MakeMasterIndex(folder,filename=None,mode="a",depth=-1):
+        global CACHE
+
+        DebugMsg("Entering MakeMasterIndex")
+
+        if filename is None or filename == "":
+                filename = CACHE
+        
+        ListIndexes(folder,filename,mode,depth,masterindex=True)
+
+        DebugMsg("Leaving MakeMasterIndex")
+
+# RemoveIndexCache : Remove Master Index Cache [COMPLETED/Tested]
+# Usage : RemoveIndexCache(filename)
+def RemoveIndexCache(filename=""):
+        global CACHE
+
+        if filename is None or filename == "": filename=CACHE
+
+        if Exists(filename):
+                os.remove(filename)
+
+# SearchFolderIndex : Search Folder Index [COMPLETED/Tested]
+def SearchFolderIndex(folder,searchExpr,outputFilename=None,mode="a",escapePattern=False):
+        filePtr = None
+
+        if HasIndex(folder):
+                if outputFilename is None:
+                        filePtr = sys.stdout
+                else:
+                        filePtr = open(outputFilename,mode)
+
+                entries = LoadIndex(folder)
+
+                for entry in entries:
+                        line = HashEntryToString(entry)
+
+                        if SearchBuffer(line,searchExpr,escapePattern):
+                                filePtr.write("{0}\n".format(line))
+
+                if not outputFilename is None: filePtr.close()
+
+# SearchCache : Search Cache File [COMPLETED/Tested]
+def SearchCache(searchExpr,outputFilename=None,escapePattern=False,cachefile=None):
+        global CACHE
+
+        flag = False
+        
+        if cachefile is None:
+                cachefile = CACHE
+
+        for line in open(cachefile,"r"):
+                line = line.strip()
+                
+                if not IsCacheMarker(line):
+                        if SearchBuffer(line,searchExpr,escapePattern):
+                                flag = True
+                                
+                                if outputFilename is None:
+                                        sys.stdout.write("{0}\n".format(line))
+                                else:
+                                        with open(outputFilename,mode) as fp:
+                                                fp.write("{0}\n".format(line))
+
+        return flag
+
+# SearchFolderIndexes : Search indexes in a folder tree [COMPLETED/Tested]
+def SearchFolderIndexes(folder,searchExpr,outputFilename=None,mode="a",escapePattern=False,useCache=True,depth=-1):
+        global CACHE
+
+        if useCache and Exists(CACHE):
+                SearchCache(searchExpr,outputFilename,escapePattern,CACHE)
+        elif not Excluded(folder) and (depth > 0 or depth == -1):
+                SearchFolderIndex(folder,searchExpr,outputFilename,mode,escapePattern)
+        
+                root, dirs, files = GetFolderContents(folder)
+
+                if depth > 0:
+                        depth = depth - 1
+
+                for subdir in dirs:
+                        SearchFolderIndexes(subdir,searchExpr,outputFilename,mode,escapePattern,useCache,depth)
+
+# FindDuplicates : Find duplicates in a folder tree (or in cache) [INCOMPLETE/Untested]
+def FindDuplicates(folder,cachename=None,outputFilename=None,mode="a",removeCache=False,depth=-1):
+        global CACHE
+
+        outputPtr = None
+        
+        if cachename is None or cachename == "":
+                cachename = CACHE
+
+        if outputFilename is None or outputFilename == "":
+                outputPtr = sys.stdout
+        else:
+                outputPtr = open(outputFilename,mode)
+                
+        if Exists(cachename) and removeCache:
+                RemoveCacheIndex(cachename)
+
+        MakeMasterIndex(folder,cachename,depth)
+
+        masterindex = LoadMasterIndex(cachename)
+
+        for masterEntry in masterindex:
+                for data in masterindex:
+                        if not data[0] == masterEntry[0] and not data[0] == -1:
+                                if data[3] == masterEntry[3]:
+                                        masterEntry[0] = -1
+                                        src = MasterEntryToHashEntry(masterEntry)
+                                        srcStr = HashEntryToString(src)
+                                        
+                                        outputPtr.write("{0} dup {1}\n".format(srcStr,data[4]))
+
+'''
 # MoveFromFolder :
 # Usage : MoveFromFolder [src] [dest]
 function MoveFromFolder()
@@ -628,7 +782,13 @@ function CopyToFolder()
 	UpdateIndexes "${abspaths}"
 	UpdateIndexes "${abspathd}"
 }
+'''
 
+# InteractiveShell : Interactive Processing Shell
+def InteractiveShell():
+        print("Not yet implemented")
+
+'''
 # Interactive Index Shell
 function InteractiveShell()
 {
@@ -681,84 +841,158 @@ function InteractiveShell()
         	SHPROMPT="$(pwd)> "
 	done
 }
+'''
 
-# TestFunc : Test a function in script
-# Usage : TestFunc [function to test] [any parameters]
-function TestFunc()
-{
-	eval ${*}
-}
+# Start Debug Log [COMPLETED/Tested]
+def StartDebug():
+        global DEBUGFILE
+                
+        with open(DEBUGFILE,"a") as log:
+                log.write("md5index called on {0}\n".format(GetTimeStamp()))
+
+# Close Debug Log [COMPLETED/Tested]
+def CloseDebug():
+        global DEBUGFILE
+
+        with open(DEBUGFILE,"a") as log:
+                log.write("md5index ended on {0}".format(GetTimeStamp()))
+                log.flush()
+
+# Test Function [INPROGRESS]
+# Usage : TestFunc()
+def TestFunc(argument):
+        global FOLDERINDEX, excludes, patterns, DEBUGFILE, CACHE
+        
+        print("Running Tests")
+
+        # Rerun index creation, update and masterindex tests
+        
+        print("Tests completed")
 
 #
 # Main Loop
 #
 
-if [ ${DEBUG} = "yes" ]; then
-	touch ${DEBUGFILE}
-	echo "md5index called on ${TIMESTAMP}"
-else
-	[ -e ${DEBUGFILE} ] && rm ${DEBUGFILE}
-fi
+if Exists(DEBUGFILE): os.remove(DEBUGFILE)
 
-declare -a cmds
+#parser.add_argument("create",help="Create an index",type=str)
+#parser.add_argument("update",help="Update an index",type=str)
+#parser.add_argument("search",help="Search through index (and tree)",type=str)
+#parser.add_argument("remove",help="Remove indexes from tree",type=str)
+#parser.add_argument("shell",help="Invoke shell")
+#parser.add_argument("find",help="Find pattern in indexes",type=str)
+#parser.add_argument("version",help="Show version")
+#parser.add_argument("duplicates",help="Find duplicates",type=str)
+#parser.add_argument("test",help="Invoke test function",type=str)
+#parser.add_argument("cache",help="Create index cache",type=str)
+#parser.add_argument("removecache",help="Remove index cache",type=str)
+#parser.add_argument("depth",help="Limit operating tree depth",type=int)
+#parser.add_argument("silent",help="Set silent mode")
+#parser.add_argument("exclude",help="Load excludes file",type=str)
+#parser.add_argument("expressions",help="Load expressions file",type=str)
+#parser.add_argument("expr",help="Load expressions file",type=str)
 
-while [ ! "${1}" = "" ]; do
-	case "${1}" in
-	"-h"|"help")	MODE="${1}"; break ;;
-	"-c"|"create")	MODE="${1}"; break ;;
-	"-u"|"update")	MODE="${1}"; break ;;
-	"-s"|"search")	MODE="${1}"; break ;;
-	"-r"|"remove")	MODE="${1}"; break ;;
-	"-sh"|"shell")	MODE="${1}"; break ;;
-	"-f"|"find")	MODE="${1}"; break ;;
-	"-v"|"version")	MODE="${1}"; break ;;
-	"duplicates")	MODE="${1}"; break ;;
-	"test")		MODE="${1}"; break ;;
-	"-m"|"cache")	MODE="${1}"; break ;;
-	"-rc"|"removecache")
-			MODE="${1}"; break ;;
-	"-d"|"depth")
-		DEPTH="-maxdepth ${2}"; shift 1 ;;
-	"-n")	SILENT="yes" ;;
-	"-e"|"exclude")
-		LoadExcludes "${2}"; shift 1 ;;
-	"-ex"|"expressions"|"expr")
-		LoadExpressions "${2}"; shift 1 ;;
-	"-debug")
-		DEBUG="yes" ;;
-	esac
+parser=argparse.ArgumentParser(description="md5index : Create md5index of contents in folders")
+parser.add_argument("-c","--create", help="Create an index",action="store_true")
+parser.add_argument("-u","--update",help="Update an index",action="store_true")
+parser.add_argument("-s","--search",help="Search through index (and tree or cache) [opt-folder] [search expr]",action="store_true")
+parser.add_argument("-r","--remove",help="Remove indexes from tree",action="store_true")
+parser.add_argument("--shell",help="Invoke shell",action="store_true")
+parser.add_argument("-f","--find",help="Find all indexes in tree",action="store_true")
+parser.add_argument("-l","--list",help="List contents of index(es)",action="store_true")
+parser.add_argument("--dup",help="Find duplicates",action="store_true")
+parser.add_argument("-v","--version",help="Show version",action="store_true")
+parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
+parser.add_argument("--cache",help="Create index cache",action="store_true")
+parser.add_argument("--rmcache",help="Remove index cache",action="store_true")
+parser.add_argument("-d","--depth",help="Limit operating tree depth",type=int,default=-1)
+parser.add_argument("-n","--silent",help="Set silent mode",action="store_true")
+parser.add_argument("-e","--excludes",help="Load excludes file",type=str)
+parser.add_argument("-x","--expressions",help="Load expressions file",type=str)
+parser.add_argument("--debug",help="Enter debug mode",action="store_true")
+parser.add_argument("folders",nargs=argparse.REMAINDER)
 
-	shift 1
-done
+args=parser.parse_args()
 
-DebugMsgLine "Finished processing Cmdline Args"
+# First Process Simple Flags that Terminate Execution Immediately
 
-shift 1
+if DEBUG or args.debug:
+        if args.debug:
+                DEBUG=args.debug
 
-itemsfound=1
+        StartDebug()
 
-DebugMsgLine "Starting to process ${MODE}"
+DebugMsg("Beginning args parsing")
 
-case "${MODE}" in
-"-h"|"help")	Usage; exit 127 ;;
-"-c"|"create")	MakeFolderIndexes $* ;;
-"-u"|"update")	UpdateFolderIndex $* ;;
-"-s"|"search")	if [ "${*}" = "" ]; then
-			SearchFolderIndexes .
-			itemsfound=$?
-		else
-			SearchFolderIndexes $*
-			itemsfound=$?
-		fi ;;
-"-r"|"remove")	RemoveIndexes $* ;;
-"test")		TestFunc $* ;;
-"duplicates")	Duplicates $* ;;
-"-f"|"find")	FindIndexes $* ;;
-"-v"|"version")	ShowVersion ;;
-"-m"|"cache")	MakeMasterIndex $* ;;
-"-rc"|"removecache")
-		[ -e "${CACHE}" ] && rm "${CACHE}" ;;
-"-sh"|"shell")	InteractiveShell $* ;;
-esac
+if args.version:
+        ShowVersion()
 
-[ "${MODE}" = "-s" -o "${MODE}" = "search" ] && exit ${itemsfound}
+# Set Operating Flags Next
+DebugMsg("Parsing Operating flags")
+
+SILENT=args.silent
+SHELLMODE=args.shell
+DEPTH=args.depth
+
+# Process Loads of External Data
+DebugMsg("Processing loadables")
+
+if not args.excludes is None:
+        LoadExcludes(args.excludes)
+if not args.expressions is None:
+        LoadExpressions(args.expr)
+
+DebugMsg("Parsing action flags")
+DebugMsg("Depth : {0}".format(DEPTH))
+
+if (len(args.folders) == 0): args.folders.append(".")
+
+if args.create:
+        for folder in args.folders:
+                CreateFolderIndexes(folder,DEPTH)
+elif args.update:
+        for folder in args.folders:
+                UpdateFolderIndexes(folder,DEPTH)
+elif args.search:
+        if len(args.folders) > 1:
+                SearchFolderIndexes(args.folders[0],args.folders[1],depth=DEPTH)
+        else:
+                SearchFolderIndexes(".",args.folder[0],dept=DEPTH)
+elif args.remove:
+        for folder in args.folders:
+                RemoveIndexes(folder,DEPTH)
+elif args.list:
+        for folder in args.folders:
+                ListIndexes(folder,DEPTH)
+elif args.find:
+        for folder in args.folders:
+                FindIndexes(folder,DEPTH)
+elif args.test:
+        for folder in args.folders:
+                TestFunc(folder)
+elif args.cache:
+        for folder in args.folders:
+                MakeMasterIndex(folder,depth=DEPTH)
+elif args.rmcache:
+        RemoveIndexCache()
+elif args.dup:
+        for folder in args.folders:
+                FindDuplicates(folder)
+
+DebugMsg("Finished processing args")
+
+if SHELLMODE:
+        InteractiveShell
+
+if DEBUG:
+        CloseDebug()
+
+'''
+4. Search
+        A. If master index for folder exists, search it, otherwise, goto B
+        B. Given folder, decompress index
+        C. Search
+A. Find Duplicate routines
+B. Interactive Shell
+
+'''
