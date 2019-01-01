@@ -786,7 +786,12 @@ function CopyToFolder()
 
 # InteractiveShell : Interactive Processing Shell
 def InteractiveShell():
-        print("Not yet implemented")
+        cmd="nop"
+
+        while not cmd = "quit":
+                cmd = sys.stdin.readline()
+
+                
 
 '''
 # Interactive Index Shell
