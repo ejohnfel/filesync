@@ -10,7 +10,223 @@ import shutil
 import subprocess
 import argparse
 import re
+import cmd
 
+'''
+Classes
+'''
+
+# Interactive Index Shell Class
+class IndexShell(cmd.Cmd):
+        intro = 'Welcome to the md5index Shell. Type help or ? for help\n'
+        prompt = '> '
+        file = None
+
+        '''
+        Functions
+        search indexes [folder]
+        search index [folder]
+        dup [folder]
+        exclude str [string]|exclude file [file]
+        re ex [re]|re file [file]
+        debug on|off
+        silent on|off
+        '''
+
+        # Default processor
+        def default(self,line):
+                print("Who...what... now!!! {0}".format(line))
+
+        # Pre Loop
+        def preloop(self):
+                self.prompt = "{0}> ".format(os.path.abspath(os.path.curdir))
+
+        # Create Index/Indexes/Cache
+        def do_create(self,args):
+                'Create an index/indexes/cache'
+                flags = self.parse(args)
+
+                task = flags[0]
+                targets = [ ]
+
+                if len(flags) == 1:
+                        targets = [ os.path.curdir ]
+                else:
+                        targets = flags[1:]
+
+                for target in targets:
+                        if task == 'index':
+                                MkIndex(target)
+                        elif task == 'indexes':
+                                CreateFolderIndexes(target)
+                        elif task == 'cache':
+                                # does not take into account the use of non-default indexes
+                                # must fix at some point
+                                MakeMasterIndex(target)
+
+        # Remove Index/Indexes/Cache
+        def do_remove(self,args):
+                'Remove an index/indexes/cache'
+                flags = self.parse(args)
+
+                task = flags[0]
+                targets = [ ]
+
+                if len(args) == 1:
+                        targets = [ os.path.curdir ]
+                else:
+                        targets = args[1:]
+
+                for target in targets:
+                        if task == 'index':
+                                RemoveIndex(target)
+                        elif task == 'indexes':
+                                RemoveIndexes(target)
+                        elif task == 'cache':
+                                # This may execute unnecessarily many times when called and
+                                # does not take into account the use of non-default caches
+                                # ... must fix at some point
+                                RemoveIndexCache()
+
+        # Update Index/Indexes/Cache
+        def do_update(self,args):
+                'Update an index/indexes/cache'
+                flags = self.parse(args)
+
+                task = flags[0]
+                targets = [ ]
+
+                if len(flags) == 1:
+                        targets = [ os.path.curdir ]
+                else:
+                        targets = flags[1:]
+
+                for target in targets:
+                        if task == 'index':
+                                UpdateFolderIndex(target)
+                        elif task == 'indexes':
+                                UpdateFolderIndexes(target)
+                        elif task == 'cache':
+                                RemoveIndexCache()
+                                MakeMasterIndex(target)
+
+        # List Index/Indexes
+        def do_list(self,args):
+                'List index/indexes from a folder or tree'
+                flags = self.parse(args)
+
+                task = flags[0]
+                targets = [ ]
+
+                if len(flags) == 1:
+                        targets = [ os.path.curdir ]
+                else:
+                        targets = flags[1:]
+
+                for target in targets:
+                        if task == 'index':
+                                ListIndex(target)
+                        elif task == 'indexes':
+                                ListIndexes(target)
+
+        # Find Indexes
+        def do_find(self,args):
+                'Find indexes in a folder tree'
+                flags = self.parse(args)
+
+                task = flags[0]
+                targets = [ ]
+
+                if len(flags) == 1:
+                        targets = [ os.path.curdir ]
+                else:
+                        targets = flags[1:]
+
+                for target in targets:
+                        FindIndexes(target)
+
+        # List contents of directory [COMPLETED]
+        def do_ls(self,args):
+                'Get the directory listing of the current directory'
+                for item in os.listdir(os.path.curdir):
+                        statinfo = os.stat(item)
+                        fileinfo = GetFileInfo(item)
+                        
+                        if os.path.isdir(item):
+                                output = "d {0:6} {1:13} {2} {3}".format(statinfo.st_mode,statinfo.st_size,fileinfo[0],item)
+                        elif os.path.isfile(item):
+                                output = "f {0:6} {1:13} {2} {3}".format(statinfo.st_mode,statinfo.st_size,fileinfo[0],item)
+                        elif os.path.islink(item):
+                                output = "s {0:6} {1:13} {2} {3}".format(statinfo.st_mode,statinfo.st_size,fileinfo[0],item)
+
+                        print(output)
+                                
+
+        # Change Folder [COMPLETED]
+        def do_cd(self,args):
+                'Change the current directory'
+                os.chdir(args[0])
+                self.prompt = "{0}> ".format(os.path.basename(os.path.curdir))
+
+        # Show current working directory
+        def do_cwd(self,args):
+                'Show current working directory'
+                print(os.path.abspath(os.curdir))
+
+        # More a file
+        def do_more(self,args):
+                'More a file'
+                lines = os.terminal_size[1]
+                
+                with open(args[0],"r") as openfile:
+                        printline = 1
+                        for line in openfile:
+                                print(line)
+                                printline = printline + 1
+
+                                if printline >= lines:
+                                        input("<< more >>")
+                                        printline = 1
+
+        # Cat a file
+        def do_cat(self,args):
+                'Cat a file'
+                with open(args[0],"r") as openfile:
+                        for line in openfile:
+                                print(line)
+
+        # Shell Sequence
+        def do_shell(self,args):
+                'Call shell with supplied arguments'
+                output=subprocess.check_output(args, shell=True)
+                print(output)
+                
+        # Terminator Functions [COMPLETED]
+        def do_quit(self,args):
+                'Quit shell'
+                print("Roger, over and out!")
+                return True
+
+        def do_exit(self,args):
+                'Exit shell'
+                print("... stage left...")
+                return True
+
+        def do_bye(self,args):
+                'Bye from shell'
+                print("...bye-eee...")
+                return True
+
+        # Self Close (currently not used, potential for debug mode)
+        def close(self):
+                'Close out shell'
+                self.file = None
+
+        # Parse Args into Tuple [COMPLETED]
+        def parse(self,args):
+                'Parse cmd line'
+                return tuple(map(str, args.split())) 
+        
 '''
 Index format
 Last_Mod_Timestamp last_size_in_bytes md5hash fullpath
@@ -47,24 +263,6 @@ patterns = [ ]
 # Usage : ShowVersion()
 def ShowVersion():
 	print("Version " + VERMAJ + "." + VERMIN)
-
-# Usage [OBSOLETE???]
-def Usage():
-	print("md5index Usage (" + VERMAJ + "." + VERMIN + ") :")
-	print("======================")
-	print("General Usage\t\t\t\tmd5index [options] [cmd] [targets]")
-	print("-h|help\t\t\t\t\tThis message")
-	print("-c|create [folder] ...\t\t\tCreate md5 index in this folder tree")
-	print("-u|update [folder] ...\t\t\tUpdate md5 index in this folder tree")
-	print("-s|search [folder] [pattern|file]...\tSearch folder tree for pattern, folder may be omitted")
-	print("-r|remove [folder ...\t\t\tRemove index(es)")
-	print("-m\t\t\t\t\tMake master index")
-	print("-rc\t\t\t\t\tRemove master index")
-	print("-e [file]\t\t\t\tItems to exclude are in file")
-	print("-ex|expr [file]\t\t\t\tItems to search for are in file")
-	print("-debug\t\t\t\t\tTurn on debug mode")
-	print("-n\t\t\t\t\tNo prompt mode")
-	print("shell [folder]\t\t\t\tExecute interactive index shell")
 
 # ShellUsage : Show Shell Commands and Usage [INPROGRESS]
 # Usage : ShellUsage
@@ -141,7 +339,7 @@ def HasIndex(folder):
 def DebugMsg(message,includetimestamp=True):
         global DEBUG, DEBUGFILE, SILENT
         
-	TIMESTAMP=GetTimeStamp()
+        TIMESTAMP=GetTimeStamp()
 
         if not includetimestamp:
                 MSG=message
@@ -178,14 +376,14 @@ def Excluded(item):
 
         flag = False
         
-	if not item == "":
+        if not item == "":
                 abspath=os.path.abspath(item)
                 target=os.path.basename(abspath)
                 
                 if target in excludes or item in excludes:
                         flag = True
 
-	return flag
+        return flag
 
 # SearchBuffer : Search a buffer for a pattern [COMPLETED/Tested]
 def SearchBuffer(buffer,pattern,escapePattern=False):
@@ -358,6 +556,8 @@ def HashEntryToString(entry):
 
 # HashEntryToMasterEntry : Convert HashEntry To MasterEntry
 def HashEntryToMasterEntry(prefix,hashEntry):
+        # MasterEntry = [ counter_flag, datetimestamp, fsize, hash, file ]
+        
         masterEntry = [ prefix, hashEntry[0], hashEntry[1], hashEntry[2], hashEntry[3] ]
 
         return masterEntry
@@ -454,11 +654,12 @@ def LoadMasterIndex(filename=None):
 
 # MkTmpIndex : Make temporary index (i.e. Uncompressed) [COMPLETED/Tested/OBSOLETE???]
 def MkTmpIndex(folder,files,tmpname,mode="w"):
-        with open(tmpname,mode) as index:
-                for item in files:                        
-                        target = os.path.join(folder,item)
+        if len(files) > 0:
+                with open(tmpname,mode) as index:
+                        for item in files:                        
+                                target = os.path.join(folder,item)
                         
-                        index.write(HashEntry(target))
+                                index.write(HashEntry(target))
 
 # MkIndex : Make Index [COMPLETE/Tested]
 def MkIndex(folder,files=None):
@@ -466,14 +667,15 @@ def MkIndex(folder,files=None):
 
         if files is None:
                 root, dirs, files = GetFolderContents(folder)
-        
-        for item in files:
-                target = os.path.join(folder,item)
 
-                if not Excluded(target):
-                        entries.append(HashEntry(target))
+        if len(files) > 0:
+                for item in files:
+                        target = os.path.join(folder,item)
 
-        SaveIndex(entries,folder)
+                        if not Excluded(target):
+                                entries.append(HashEntry(target))
+
+                SaveIndex(entries,folder)
         
 # CreateFolderIndexes : Create Folder Index(es) [COMPLETE/Tested]
 def CreateFolderIndexes(folder,depth=-1):
@@ -482,7 +684,7 @@ def CreateFolderIndexes(folder,depth=-1):
         if not Excluded(folder):
                 root, dirs, files = GetFolderContents(folder)
 
-                MkIndex(root,files)
+                if len(files) > 0: MkIndex(root,files)
 
                 if depth < 0 or depth > 0:
                         depth = depth - 1
@@ -513,11 +715,13 @@ def UpdateFolderIndex(folder):
         dirs = [ ]
         
         if not Excluded(folder):
-                if not HasIndex(folder):
-                        MkIndex(folder)
-                else:
-                        root, dirs, files = GetFolderContents(folder)
+                root, dirs, files = GetFolderContents(folder)
 
+                if not HasIndex(folder) and len(files) > 0:
+                        MkIndex(folder)
+                elif HasIndex(folder) and len(files) == 0:
+                        RemoveIndex(folder)
+                elif len(files) > 0:
                         removables = [ ]
                         changes = False
                         entries = LoadIndex(folder)
@@ -786,7 +990,9 @@ function CopyToFolder()
 
 # InteractiveShell : Interactive Processing Shell
 def InteractiveShell():
-         while True:
+        IndexShell().cmdloop()
+        
+        while False:
                 sys.stdout.write("> ")
                 cmd = sys.stdin.readline().strip()
                 args = cmd.split(" ")
@@ -906,128 +1112,107 @@ def TestFunc(argument):
 # Main Loop
 #
 
-if Exists(DEBUGFILE): os.remove(DEBUGFILE)
+if __name__ == '__main__':
 
-#parser.add_argument("create",help="Create an index",type=str)
-#parser.add_argument("update",help="Update an index",type=str)
-#parser.add_argument("search",help="Search through index (and tree)",type=str)
-#parser.add_argument("remove",help="Remove indexes from tree",type=str)
-#parser.add_argument("shell",help="Invoke shell")
-#parser.add_argument("find",help="Find pattern in indexes",type=str)
-#parser.add_argument("version",help="Show version")
-#parser.add_argument("duplicates",help="Find duplicates",type=str)
-#parser.add_argument("test",help="Invoke test function",type=str)
-#parser.add_argument("cache",help="Create index cache",type=str)
-#parser.add_argument("removecache",help="Remove index cache",type=str)
-#parser.add_argument("depth",help="Limit operating tree depth",type=int)
-#parser.add_argument("silent",help="Set silent mode")
-#parser.add_argument("exclude",help="Load excludes file",type=str)
-#parser.add_argument("expressions",help="Load expressions file",type=str)
-#parser.add_argument("expr",help="Load expressions file",type=str)
+        if Exists(DEBUGFILE): os.remove(DEBUGFILE)
 
-parser=argparse.ArgumentParser(description="md5index : Create md5index of contents in folders")
-parser.add_argument("-c","--create", help="Create an index",action="store_true")
-parser.add_argument("-u","--update",help="Update an index",action="store_true")
-parser.add_argument("-s","--search",help="Search through index (and tree or cache) [opt-folder] [search expr]",action="store_true")
-parser.add_argument("-r","--remove",help="Remove indexes from tree",action="store_true")
-parser.add_argument("--shell",help="Invoke shell",action="store_true")
-parser.add_argument("-f","--find",help="Find all indexes in tree",action="store_true")
-parser.add_argument("-l","--list",help="List contents of index(es)",action="store_true")
-parser.add_argument("--dup",help="Find duplicates",action="store_true")
-parser.add_argument("-v","--version",help="Show version",action="store_true")
-parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
-parser.add_argument("--cache",help="Create index cache",action="store_true")
-parser.add_argument("--rmcache",help="Remove index cache",action="store_true")
-parser.add_argument("-d","--depth",help="Limit operating tree depth",type=int,default=-1)
-parser.add_argument("-n","--silent",help="Set silent mode",action="store_true")
-parser.add_argument("-e","--excludes",help="Load excludes file",type=str)
-parser.add_argument("-x","--expressions",help="Load expressions file",type=str)
-parser.add_argument("--debug",help="Enter debug mode",action="store_true")
-parser.add_argument("folders",nargs=argparse.REMAINDER)
+        parser=argparse.ArgumentParser(description="md5index : Create md5index of contents in folders")
+        parser.add_argument("-c","--create", help="Create an index",action="store_true")
+        parser.add_argument("-u","--update",help="Update an index",action="store_true")
+        parser.add_argument("-s","--search",help="Search through index (and tree or cache) [opt-folder] [search expr]",action="store_true")
+        parser.add_argument("-r","--remove",help="Remove indexes from tree",action="store_true")
+        parser.add_argument("--shell",help="Invoke shell",action="store_true")
+        parser.add_argument("-f","--find",help="Find all indexes in tree",action="store_true")
+        parser.add_argument("-l","--list",help="List contents of index(es)",action="store_true")
+        parser.add_argument("--dup",help="Find duplicates",action="store_true")
+        parser.add_argument("-v","--version",help="Show version",action="store_true")
+        parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
+        parser.add_argument("--cache",help="Create index cache",action="store_true")
+        parser.add_argument("--rmcache",help="Remove index cache",action="store_true")
+        parser.add_argument("-d","--depth",help="Limit operating tree depth",type=int,default=-1)
+        parser.add_argument("-n","--silent",help="Set silent mode",action="store_true")
+        parser.add_argument("-e","--excludes",help="Load excludes file",type=str)
+        parser.add_argument("-x","--expressions",help="Load expressions file",type=str)
+        parser.add_argument("--debug",help="Enter debug mode",action="store_true")
+        parser.add_argument("folders",nargs=argparse.REMAINDER)
 
-args=parser.parse_args()
+        args=parser.parse_args()
 
-# First Process Simple Flags that Terminate Execution Immediately
+        # First Process Simple Flags that Terminate Execution Immediately
 
-if DEBUG or args.debug:
-        if args.debug:
-                DEBUG=args.debug
+        if DEBUG or args.debug:
+                if args.debug:
+                        DEBUG=args.debug
 
-        StartDebug()
+                StartDebug()
 
-DebugMsg("Beginning args parsing")
+        DebugMsg("Beginning args parsing")
 
-if args.version:
-        ShowVersion()
+        if args.version:
+                ShowVersion()
 
-# Set Operating Flags Next
-DebugMsg("Parsing Operating flags")
+        # Set Operating Flags Next
+        DebugMsg("Parsing Operating flags")
 
-SILENT=args.silent
-SHELLMODE=args.shell
-DEPTH=args.depth
+        SILENT=args.silent
+        SHELLMODE=args.shell
+        DEPTH=args.depth
 
-# Process Loads of External Data
-DebugMsg("Processing loadables")
+        # Process Loads of External Data
+        DebugMsg("Processing loadables")
 
-if not args.excludes is None:
-        LoadExcludes(args.excludes)
-if not args.expressions is None:
-        LoadExpressions(args.expr)
+        if not args.excludes is None:
+                LoadExcludes(args.excludes)
+        if not args.expressions is None:
+                LoadExpressions(args.expr)
 
-DebugMsg("Parsing action flags")
-DebugMsg("Depth : {0}".format(DEPTH))
+        DebugMsg("Parsing action flags")
 
-if (len(args.folders) == 0): args.folders.append(".")
+        if (len(args.folders) == 0): args.folders.append(".")
 
-if args.create:
-        for folder in args.folders:
-                CreateFolderIndexes(folder,DEPTH)
-elif args.update:
-        for folder in args.folders:
-                UpdateFolderIndexes(folder,DEPTH)
-elif args.search:
-        if len(args.folders) > 1:
-                SearchFolderIndexes(args.folders[0],args.folders[1],depth=DEPTH)
-        else:
-                SearchFolderIndexes(".",args.folder[0],dept=DEPTH)
-elif args.remove:
-        for folder in args.folders:
-                RemoveIndexes(folder,DEPTH)
-elif args.list:
-        for folder in args.folders:
-                ListIndexes(folder,DEPTH)
-elif args.find:
-        for folder in args.folders:
-                FindIndexes(folder,DEPTH)
-elif args.test:
-        for folder in args.folders:
-                TestFunc(folder)
-elif args.cache:
-        for folder in args.folders:
-                MakeMasterIndex(folder,depth=DEPTH)
-elif args.rmcache:
-        RemoveIndexCache()
-elif args.dup:
-        for folder in args.folders:
-                FindDuplicates(folder)
-elif args.shell:
-        InteractiveShell()
+        if args.create:
+                for folder in args.folders:
+                        CreateFolderIndexes(folder,DEPTH)
+        elif args.update:
+                for folder in args.folders:
+                        UpdateFolderIndexes(folder,DEPTH)
+        elif args.search:
+                if len(args.folders) > 1:
+                        SearchFolderIndexes(args.folders[0],args.folders[1],depth=DEPTH)
+                else:
+                        SearchFolderIndexes(".",args.folder[0],dept=DEPTH)
+        elif args.remove:
+                for folder in args.folders:
+                        RemoveIndexes(folder,DEPTH)
+        elif args.list:
+                for folder in args.folders:
+                        ListIndexes(folder,DEPTH)
+        elif args.find:
+                for folder in args.folders:
+                        FindIndexes(folder,DEPTH)
+        elif args.test:
+                for folder in args.folders:
+                        TestFunc(folder)
+        elif args.cache:
+                for folder in args.folders:
+                        MakeMasterIndex(folder,depth=DEPTH)
+        elif args.rmcache:
+                RemoveIndexCache()
+        elif args.dup:
+                for folder in args.folders:
+                        FindDuplicates(folder)
+        elif args.shell:
+                SHELLMODE = True
 
-DebugMsg("Finished processing args")
+        DebugMsg("Finished processing args")
 
-if SHELLMODE:
-        InteractiveShell
+        if SHELLMODE:
+                DebugMsg("Entering Shell")
+                #InteractiveShell
+                IndexShell().cmdloop()
+                DebugMsg("Exitting Shell")
 
-if DEBUG:
-        CloseDebug()
+        if DEBUG:
+                DebugMsg("Close Debug Log")
+                CloseDebug()
 
-'''
-4. Search
-        A. If master index for folder exists, search it, otherwise, goto B
-        B. Given folder, decompress index
-        C. Search
-A. Find Duplicate routines
-B. Interactive Shell
-
-'''
