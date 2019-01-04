@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 import io
 import os
 import gzip
@@ -11,6 +11,7 @@ import subprocess
 import argparse
 import re
 import cmd
+import shlex
 
 '''
 Classes
@@ -245,6 +246,7 @@ TIMESTAMPFORMAT="%c"
 TIMESTAMP=datetime.datetime.now().strftime(TIMESTAMPFORMAT)
 DEBUG=False
 DEBUGFILE="/tmp/md5index.debug"
+ACCESSDENIEDLOG="/tmp/md5index.access.denied"
 VERBOSE=False
 FOLDERINDEX=".md5index.gz"
 MODE="search"
@@ -301,6 +303,63 @@ def TmpFilename(targetDir="/tmp", prefix="md5index.tmp"):
 
         return tmpname
 
+# Touch : Create a file or zero length, or update a mod timestamp
+def Touch(item):
+        data = open(item,"a")
+
+        data.close()
+
+# ReadTest : Read Test or File or Folder
+def ReadTest(item):
+        flag = False
+
+        try:
+                if os.path.exists(item):
+                        if os.path.isdir(item):
+                                objects = os.listdir(item)
+
+                                flag = True
+                        else:
+                                with open(item,"r") as data:
+                                        flag = True
+        except PermissionError:
+                flag = False
+
+        return flag
+
+# WriteTest : Write Test on File or Folder
+def WriteTest(item):
+        flag = False
+
+        try:
+                if os.path.exists(item):
+                        if os.path.isdir(item):
+                                n = TmpFilename(item)
+                                Touch(n)
+
+                                os.remove(n)
+                                flag = True
+                        else:
+                                Touch(item)
+                                flag = True
+
+        except PermissionError:
+                flag = False
+
+        return flag
+
+# CheckAccess : Check access to named item
+def CheckAccess(item,mode="rw"):
+        flag = True
+
+        if "r" in mode:
+                flag = ReadTest(item)
+
+        if "w" in mode and flag:
+                flag = WriteTest(item)
+
+        return flag
+
 # GetFolderContents : Get Folder Contents [COMPLETED/Tested]
 def GetFolderContents(folder):
         folders = [ ]
@@ -334,6 +393,16 @@ def HasIndex(folder):
 
         return Exists(index)
 
+# Report A Failed Access
+def ReportFailedAccess(item,prefix=""):
+        global ACCESSDENIEDLOG
+
+        if prefix == "":
+                prefix = "Access denied :"
+        
+        with open(ACCESSDENIEDLOG,"a") as report:
+                report.write("{0} {1}\n".format(prefix,item))
+        
 # DebugMsg : Print a debugging message (and print to log) [COMPLETED/Tested]
 # Usage : DebugMsg(message,includetimestamp)
 def DebugMsg(message,includetimestamp=True):
@@ -416,7 +485,7 @@ def UncompressedFileSearch(filename,pattern,escapePattern=False):
 def CompressedFileSearch(archivename,pattern,escapePattern=False):
         found = False
 
-        with gzip.open(archivename,"rb",1024) as archive:
+        with io.TextIPWrapper(gzip.open(archivename,"rb",1024)) as archive:
                 for line in archive:
                         found = SearchBuffer(line,pattern,escapePattern)
 
@@ -430,7 +499,7 @@ def DumpContents(filename):
         dataFile = None
         
         if not rexp.search(filename) is None:
-                dataFile = gzip.open(filename,"rb",1024)
+                dataFile = io.TextIOWrapper(gzip.open(filename,"rb",1024))
         else:
                 dataFile = open(filename,"r",1024)
                 
@@ -443,7 +512,7 @@ def DumpContents(filename):
 def Compress(uncompressedFilename,compressedFilename,removeOriginal=True,removeArchive=True):
         if Exists(compressedFilename) and removeArchive: os.remove(compressedFilename)
 
-        with open(uncompressedFilename,"r") as uncompressedFile, gzip.open(compressedFilename,"wb") as compressedFile:
+        with open(uncompressedFilename,"r") as uncompressedFile, io.TextIOWrapper(gzip.open(compressedFilename,"wb")) as compressedFile:
                 shutil.copyfileobj(uncompressedFile,compressedFile,1024)
 
         if removeOriginal:
@@ -461,7 +530,7 @@ def CompressIndex(folder,tmpIndex,removeArchive=True):
 def Decompress(compressedFilename,uncompressedFilename,removeArchive=True,mode="w",clearOriginal=False):
         if Exists(uncompressedFilename) and clearOriginal: os.remove(uncompressedFilename)
         
-        with open(uncompressedFilename,mode) as uncompressedFile, gzip.open(compressedFilename,"rb") as compressedFile:
+        with open(uncompressedFilename,mode) as uncompressedFile, io.TextIOWrapper(gzip.open(compressedFilename,"rb")) as compressedFile:
                 shutil.copyfileobj(compressedFile,uncompressedFile,1024)
 
         if removeArchive:
@@ -481,8 +550,10 @@ def FindIndexes(root,depth=-1):
         global FOLDERINDEX
 
         root, dirs, files = GetFolderContents(root)
-        
-        if not Excluded(root):
+
+        if not CheckAccess(root):
+                ReportFailedAccess(root)
+        elif not Excluded(root):
                 currentIndex = os.path.join(root,FOLDERINDEX)
                 
                 if Exists(currentIndex):
@@ -500,7 +571,9 @@ def RemoveIndex(folder):
 
         currentIndex = os.path.join(folder,FOLDERINDEX)
 
-        if Exists(currentIndex):
+        if not CheckAccess(currentIndex):
+                ReportFailedAccess(currentIndex)
+        elif Exists(currentIndex):
                 os.remove(currentIndex)
                 
 # RemoveIndexes : Remove All Indexes [COMPLETED/Tested]
@@ -517,7 +590,7 @@ def RemoveIndexes(root,depth=-1):
 
 # MD5Hash : Get MD5 Hash of file [COMPLETED/Tested]
 def MD5Hash(filename):
-        cmd = "md5sum \"{0}\"".format(filename)
+        cmd = "md5sum {0}".format(shlex.quote(filename))
         
         output=subprocess.check_output(cmd, shell=True)
         
@@ -578,7 +651,14 @@ def ParseHashEntry(hashEntry):
         # maxsplit = 4, because fnames make contain white space. This will parse date,time,size,hash and dump the remainder as one string
         data = hashEntry.split(" ",4)
 
-        mod_timestamp = datetime.datetime.strptime("{0} {1}".format(data[0],data[1]),"%Y-%m-%d %H:%M:%S.%f")
+        flag = re.match(r"^\d{4}\-\d{2}\-\d{2} \d{2}\:\d{2}\:\d{2}\.\d+ ",hashEntry,re.IGNORECASE)
+
+        if not flag is None:
+                fmt="%Y-%m-%d %H:%M:%S.%f"
+        else:
+                fmt="%Y-%m-%d %H:%M:%S"
+        
+        mod_timestamp = datetime.datetime.strptime("{0} {1}".format(data[0],data[1]),fmt)
 
         entry = [ mod_timestamp, data[2], data[3], data[4].strip() ]
 
@@ -610,7 +690,7 @@ def LoadIndex(folder):
 
         target = os.path.join(folder,FOLDERINDEX)
 
-        with gzip.open(target,"rb") as index:
+        with io.TextIOWrapper(gzip.open(target,"rb")) as index:
                 for line in index:
                         entry = ParseHashEntry(str.strip(line))
 
@@ -624,7 +704,7 @@ def SaveIndex(entries,folder):
         
         target = os.path.join(folder,FOLDERINDEX)
 
-        with gzip.open(target,"wb") as index:
+        with io.TextIOWrapper(gzip.open(target,"wb")) as index:
                 for entry in entries:
                         index.write("{0} {1} {2} {3}\n".format(entry[0],entry[1],entry[2],entry[3]))
 
@@ -665,6 +745,10 @@ def MkTmpIndex(folder,files,tmpname,mode="w"):
 def MkIndex(folder,files=None):
         entries = [ ]
 
+        if not CheckAccess(folder):
+                ReportFailedAccess(folder)
+                return
+
         if files is None:
                 root, dirs, files = GetFolderContents(folder)
 
@@ -672,7 +756,9 @@ def MkIndex(folder,files=None):
                 for item in files:
                         target = os.path.join(folder,item)
 
-                        if not Excluded(target):
+                        if not CheckAccess(target):
+                                ReportFailedAccess(target,"Read denied while building index :")
+                        elif not Excluded(target):
                                 entries.append(HashEntry(target))
 
                 SaveIndex(entries,folder)
@@ -712,9 +798,13 @@ def AddToIndex(index,folder,item):
 
 # UpdateFolderIndex : Update folder index
 def UpdateFolderIndex(folder):
-        dirs = [ ]
+        DebugMsg("EnteringUpdateFolderIndex({0})".format(folder))
         
-        if not Excluded(folder):
+        dirs = [ ]
+
+        if not CheckAccess(folder):
+                ReportFailedAccess(folder)
+        elif not Excluded(folder):
                 root, dirs, files = GetFolderContents(folder)
 
                 if not HasIndex(folder) and len(files) > 0:
@@ -786,43 +876,50 @@ def ListIndex(folder,tmpfile="",mode="w",masterindex=False):
         index=os.path.join(folder,FOLDERINDEX)
 
         if Exists(index):
-                if tmpfile == "":
-                        tmpname = TmpFilename(prefix="md5index.listing")
+                if not CheckAccess(index,"r"):
+                        ReportFailedAccess(index)
                 else:
-                        tmpname = tmpfile
+                        if tmpfile == "":
+                                tmpname = TmpFilename(prefix="md5index.listing")
+                        else:
+                                tmpname = tmpfile
 
-                # Prep MasterIndex Items
-                found = False
-                header = "from start {0}\n".format(folder)
+                        # Prep MasterIndex Items
+                        found = False
+                        header = "from start {0}\n".format(folder)
 
-                # Assurance that mode is not set to, or left to default "w" by absentminded programmer
-                if masterindex: mode = "a"
+                        # Assurance that mode is not set to, or left to default "w" by absentminded programmer
+                        if masterindex: mode = "a"
 
-                # If master index enabled, search master index cache for existing entry
-                if masterindex and Exists(tmpname):
-                        found = UncompressedFileSearch(tmpname,"^{0}".format(re.escape(header)))
+                        # If master index enabled, search master index cache for existing entry
+                        if masterindex and Exists(tmpname):
+                                found = UncompressedFileSearch(tmpname,"^{0}".format(re.escape(header)))
 
-                # If masterindex enabled and folder directive is not found, then add marker to master index cache
-                if masterindex and not found:
-                        with open(tmpname,"a") as mi: mi.write(header)
+                        # If masterindex enabled and folder directive is not found, then add marker to master index cache
+                        if masterindex and not found:
+                                with open(tmpname,"a") as mi: mi.write(header)
 
-                # If not masterindex enabled, dump to index file regardless. If masterindex enabled and folder not found, dump index
-                if not masterindex or (masterindex and not found):
-                        DecompressIndex(folder,tmpname,False,mode)
+                        # If not masterindex enabled, dump to index file regardless. If masterindex enabled and folder not found, dump index
+                        if not masterindex or (masterindex and not found):
+                                DecompressIndex(folder,tmpname,False,mode)
 
-                # If masterindex enabled and not found, add parting marker
-                if masterindex and not found:
-                        with open(tmpname,"a") as mi: mi.write("from end {0}\n".format(folder))
-                
-                if tmpfile == "":
-                        DumpContents(tmpname)
-                        os.remove(tmpname)
+                        # If masterindex enabled and not found, add parting marker
+                        if masterindex and not found:
+                                with open(tmpname,"a") as mi: mi.write("from end {0}\n".format(folder))
+                        
+                        if tmpfile == "":
+                                DumpContents(tmpname)
+                                os.remove(tmpname)
 
         DebugMsg("Exitting ListIndex")
         
 # ListIndexes : List contents of indexes in tree [COMPLETED/Tested]
 def ListIndexes(folder,tmpfile="",mode="w",depth=-1,masterindex=False):
         DebugMsg("Entering ListIndexes")
+
+        if not CheckAccess(folder,"r"):
+                ReportFailedAccess(folder)
+                return
         
         root, dirs, files = GetFolderContents(folder)
 
@@ -857,6 +954,10 @@ def RemoveIndexCache(filename=""):
 
         if filename is None or filename == "": filename=CACHE
 
+        if not CheckAccess(filename,"w"):
+                ReportFailedAccess(filename)
+                return
+
         if Exists(filename):
                 os.remove(filename)
 
@@ -864,7 +965,9 @@ def RemoveIndexCache(filename=""):
 def SearchFolderIndex(folder,searchExpr,outputFilename=None,mode="a",escapePattern=False):
         filePtr = None
 
-        if HasIndex(folder):
+        if not CheckAccess(folder,"r"):
+                ReportFailedAccess(folder)
+        elif HasIndex(folder):
                 if outputFilename is None:
                         filePtr = sys.stdout
                 else:
