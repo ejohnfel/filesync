@@ -230,7 +230,7 @@ class IndexShell(cmd.Cmd):
         
 '''
 Index format
-Last_Mod_Timestamp last_size_in_bytes md5hash fullpath
+Last_Mod_Timestamp last_size_in_bytes md5hash filename
 
 Master Index Format
 Same as Index format, except, the start of each added index includes a index marker of the following format.
@@ -242,6 +242,7 @@ random.seed()
 
 VERMAJ="0"
 VERMIN="2ep"
+HASENTRYVERSION=2
 TIMESTAMPFORMAT="%c"
 TIMESTAMP=datetime.datetime.now().strftime(TIMESTAMPFORMAT)
 DEBUG=False
@@ -612,18 +613,12 @@ def HashEntry(filename):
 
         return entry
 
-# HashEntry : Create/Format Hash Entry [COMPLETED/Tested/OBSOLETE??]
-def HashEntryLine(filename):
-        filehash = MD5Hash(filename)
-        mod_timestamp, fsize = GetFileInfo(filename)
-                        
-        # Use datetime.datetime.strptime(date_string, format) to convert back to datetime object
-                        
-        return "{0} {1} {2} {3}\n".format(mod_timestamp,fsize,filehash,filename)
-
 # HashEntryToString : Convert HashEntry to string (useful for searches) [COMPLETED/Tested]
-def HashEntryToString(entry):
+def HashEntryToString(entry,newline=False):
         output = "{0} {1} {2} {3}".format(str(entry[0]), str(entry[1]), entry[2], entry[3])
+
+        if newline:
+                output = output + "\n"
 
         return output
 
@@ -641,15 +636,35 @@ def MasterEntryToHashEntry(masterEntry):
 
         return hashEntry
 
+# UpgradeOldHashEntry : Upgrade an old Hash Entry to the new form
+def UpgradeOldHashEntry(data,folder):
+        columns = data.split(" ",2)
+        checksum = columns[0]
+        filename = os.path.join(folder,columns[1])
+        mod_timestamp, fsize = GetFileInfo(filename)
+
+        hashEntry = "{0} {1} {2} {3}".format(mod_timestamp,fsize,checksum,filename)
+
+        return [ hashEntry, hashEntry.split(" ",4) ]
+
 # ParseHashEntry : Parse Hash Entry into Tuple [COMPELTED/Tested]
-def ParseHashEntry(hashEntry):
+def ParseHashEntry(hashEntry,folder):
         # Format of entry
         # [Mod time stamp] [file size] [hash] [file w/full path]
         # Ex.
         # 2018-09-24 11:40:49.954439 783 e532987abda7765c8620875d439dce7b /srv/storage/projects/scripts/filesync/README.md
-
+        # Old format : e532987abda7765c8620875d439dce7b /srv/storage/projects/scripts/filesync/README.md
+        
         # maxsplit = 4, because fnames make contain white space. This will parse date,time,size,hash and dump the remainder as one string
-        data = hashEntry.split(" ",4)
+        data = ""
+
+        # Check for old Entry
+        flag = re.match(r"^[a-f0-9]{26,40}\s",hashEntry,re.IGNORECASE)
+        
+        if not flag is None:
+                hashEntry, data = UpgradeOldHashEntry(hashEntry,folder)
+        else:
+                data = hashEntry.split(" ",4)
 
         flag = re.match(r"^\d{4}\-\d{2}\-\d{2} \d{2}\:\d{2}\:\d{2}\.\d+ ",hashEntry,re.IGNORECASE)
 
@@ -692,7 +707,7 @@ def LoadIndex(folder):
 
         with io.TextIOWrapper(gzip.open(target,"rb")) as index:
                 for line in index:
-                        entry = ParseHashEntry(str.strip(line))
+                        entry = ParseHashEntry(str.strip(line),folder)
 
                         entries.append(entry)
 
@@ -706,7 +721,7 @@ def SaveIndex(entries,folder):
 
         with io.TextIOWrapper(gzip.open(target,"wb")) as index:
                 for entry in entries:
-                        index.write("{0} {1} {2} {3}\n".format(entry[0],entry[1],entry[2],entry[3]))
+                        index.write(HashEntryToString(entry,True))
 
 # LoadMasterIndex : Load Master index into memory [INCOMPLETE/Untested]
 def LoadMasterIndex(filename=None):
@@ -718,11 +733,15 @@ def LoadMasterIndex(filename=None):
                 filename = CACHE
                 
         if Exists(filename):
+                folder = ""
                 with open(filename,"r") as masterindex:
                         counter = 0
                         for line in masterindex:
+                                if IsStartCacheMarker(line):
+                                        folder = line.split(" ",3)[2]
+                                        
                                 if not IsCacheMarker(line):
-                                        entry = ParseHashEntry(line)
+                                        entry = ParseHashEntry(line,folder)
 
                                         masterEntry = HashEntryToMasterEntry(counter,entry)
 
@@ -866,6 +885,100 @@ def UpdateFolderIndexes(folder,depth=-1):
                 
         for subdir in dirs:
                 UpdateFolderIndexes(subdir, depth)
+
+# CheckIndex : Open Index and determine version
+def CheckIndex(folder):
+        global FOLDERINDEX
+        
+        ver = 0
+
+        filename = os.path.join(folder,FOLDERINDEX)
+
+        if Exists(filename):
+                with io.TextIOWrapper(gzip.open(filename,"rb")) as index:
+                        line = index.read()
+
+                        if len(line) > 0:
+                                flag = re.match(r"^[0-9a-z]+\s",line,re.IGNORECASE)
+
+                                if not flag is None:
+                                        ver = 1
+
+                                flag = re.match(r"^[0-9]{4}\-[0-9]{2}\-[0-9]{2}\s",line,re.IGNORECASE)
+
+                                if not flag is None:
+                                        ver = 2
+
+                                # If unidentifiable (exits but has no version), flag it
+                                if ver == 0:
+                                        ver = -2
+                        else:
+                                ver = -3
+
+        return ver
+
+# ConvertIndexes : Convert v1 to v2 indexes
+def ConvertIndexes(folder,oldver=1,newver=2,depth=-1):
+        global FOLDERINEX
+
+        DebugMsg("Entering ConvertIndexes")
+
+        if not CheckAccess(folder,"r"):
+                ReportFailedAccess(folder)
+                return
+        
+        root, dirs, files = GetFolderContents(folder)
+
+        if not Excluded(root) and (depth > 0 or depth == -1):
+                pth = os.path.join(folder,FOLDERINDEX)
+                
+                ver = CheckIndex(root)
+
+                # Currently LoadIndex recognizes v1 and auto-converts to v2
+                if ver == oldver:
+                        print("Converting {0} to v{1} format".format(pth,newver))
+                        index = LoadIndex(folder)
+                        SaveIndex(index,folder)
+                        
+                if depth > 0:
+                        depth = depth - 1
+
+                for subdir in dirs:
+                        ConvertIndexes(subdir,oldver,newver,depth)
+                                
+        DebugMsg("Exitting ConvertIndexes")        
+
+# ListIndexes : List contents of indexes in tree [COMPLETED/Tested]
+def ListOldIndexes(folder,vers=-1,depth=-1):
+        global FOLDERINDEX
+        
+        DebugMsg("Entering ListOldIndexes")
+
+        if not CheckAccess(folder,"r"):
+                ReportFailedAccess(folder)
+                return
+        
+        root, dirs, files = GetFolderContents(folder)
+
+        if not Excluded(root) and (depth > 0 or depth == -1):
+                pth = os.path.join(folder,FOLDERINDEX)
+                
+                ver = CheckIndex(root)
+
+                if vers == -1 or ver == vers:
+                        print("ver {0} {1}".format(ver,pth))
+                elif ver == -2:
+                        print("Unknown {0}".format(pth))
+                elif ver == -3:
+                        print("Empty {0}".format(pth))
+                        
+                if depth > 0:
+                        depth = depth - 1
+
+                for subdir in dirs:
+                        ListOldIndexes(subdir,vers)
+                                
+        DebugMsg("Exitting ListOldIndexes")
 
 # ListIndex : List contents of index in folder [COMPLETED/Tested]
 def ListIndex(folder,tmpfile="",mode="w",masterindex=False):
@@ -1227,6 +1340,8 @@ if __name__ == '__main__':
         parser.add_argument("--shell",help="Invoke shell",action="store_true")
         parser.add_argument("-f","--find",help="Find all indexes in tree",action="store_true")
         parser.add_argument("-l","--list",help="List contents of index(es)",action="store_true")
+        parser.add_argument("--findv",help="Find indexes and list their versions",action="store_true")
+        parser.add_argument("--convert",help="Convert indexes between versions",action="store_true")
         parser.add_argument("--dup",help="Find duplicates",action="store_true")
         parser.add_argument("-v","--version",help="Show version",action="store_true")
         parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
@@ -1290,6 +1405,12 @@ if __name__ == '__main__':
         elif args.list:
                 for folder in args.folders:
                         ListIndexes(folder,DEPTH)
+        elif args.findv:
+                for folder in args.folders:
+                        ListOldIndexes(folder,1,DEPTH)
+        elif args.convert:
+                for folder in args.folders:
+                        ConvertIndexes(folder,depth=DEPTH)
         elif args.find:
                 for folder in args.folders:
                         FindIndexes(folder,DEPTH)
