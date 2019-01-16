@@ -1684,8 +1684,6 @@ if __name__ == '__main__':
         elif args.merge:
                 if len(args.folders) > 1:
                         MergeFolders(args.folders[0],args.folders[1],REMOVEFLAG)
-        elif args.del:
-                REMOVEFLAG = True
         elif args.clear:
                 if Exists(ACCESSDENIEDLOG): os.remove(ACCESSDENIEDLOG)
                 if Exists(DEBUGFILE): os.remove(DEBUGFILE)
