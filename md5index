@@ -1580,7 +1580,7 @@ if __name__ == '__main__':
         parser.add_argument("--dup",help="Find duplicates",action="store_true")
         parser.add_argument("--dedup",help="Deduplicate files/folders in given folder",type=str)
         parser.add_argument("--merge",help="merge one folder into another folders [merge-target] [folder2]",action="store_true")
-        parser.add_argument("--remove",help="Set removal flag for operations that move or delete files/folders",action="store_true")
+        parser.add_argument("--del",help="Set delete flag for operations that move or delete files/folders",action="store_true")
         parser.add_argument("-v","--version",help="Show version",action="store_true")
         parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
         parser.add_argument("--cache",help="Create index cache",action="store_true")
@@ -1617,7 +1617,7 @@ if __name__ == '__main__':
         SILENT=args.silent
         SHELLMODE=args.shell
         DEPTH=args.depth
-        REMOVEFLAG = args.remove
+        REMOVEFLAG = args.del
 
         # Process Loads of External Data
         DebugMsg("Processing loadables")
@@ -1684,8 +1684,8 @@ if __name__ == '__main__':
         elif args.merge:
                 if len(args.folders) > 1:
                         MergeFolders(args.folders[0],args.folders[1],REMOVEFLAG)
-        elif args.shell:
-                SHELLMODE = True
+        elif args.del:
+                REMOVEFLAG = True
         elif args.clear:
                 if Exists(ACCESSDENIEDLOG): os.remove(ACCESSDENIEDLOG)
                 if Exists(DEBUGFILE): os.remove(DEBUGFILE)
