@@ -252,6 +252,7 @@ FOLDERINDEX=".md5index.gz"
 MODE="search"
 SILENT=False
 SHELLMODE=False
+REMOVEFLAG=False
 DEPTH=-1
 BUILDINDEX=0
 TMPCACHE="/tmp/md5index.tmp.cache." + str(random.randint(0,65535))
@@ -1263,9 +1264,13 @@ def FindDuplicates(folder,cachename=None,outputFilename=None,mode="a",removeCach
                                         
                         index=index+1
 
-# Deduplicate : Compare a source folder with a target and copy (or replace) files and folders
-def Deduplicate(srcFolder,tarFolder,ask=True,movefile=False):
-        DebugMsg("Entering dedup({0},{1})".format(srcFolder,tarFolder))
+# DeduplicateFolder : Deduplicate files and folders in a given folder tree
+def DeduplicateFolder(folder):
+        print("Not yet implemented")
+
+# MergeFolders : Compare a source folder with a target and copy (or replace) files and folders
+def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
+        DebugMsg("Entering MergeFolders({0},{1})".format(srcFolder,tarFolder))
         
         srcFolder = os.path.abspath(srcFolder)
         tarFolder = os.path.abspath(tarFolder)
@@ -1329,6 +1334,7 @@ def Deduplicate(srcFolder,tarFolder,ask=True,movefile=False):
                                 if not srcEntry[2] == tarEntry[2]:
                                         if Overwrite(tarEntry,srcEntry):
                                                 if movefile:
+                                                        print("Replacing {2}/{1} with {0}/{1}".format(tarRoot,file,srcRoot))
                                                         MoveFile(file,tarRoot,srcRoot,True)
                                                         tarIndex.remove(tarEntry)
                                                         saveTarIndex = True
@@ -1338,12 +1344,14 @@ def Deduplicate(srcFolder,tarFolder,ask=True,movefile=False):
                                                         srcEntry[3] = tmpsrcFile
                                                         saveSrcIndex = True
                                                 else:
+                                                        print("Copying {0}/{1} over {2}/{1}".format(tarRoot,file,srcRoot))
                                                         CopyFile(file,tarRoot,srcRoot,True)
                                                         srcEntry = tarEntry
                                                         srcEntry[3] = tmpsrcFile
                                                         saveSrcIndex = True
                         else:
                                 if movefile:
+                                        print("Moving {0}/{1} to {2}/{1}".format(tarRoot,file,srcRoot))
                                         MoveFile(file,tarRoot,srcRoot)
                                         tarIndex.remove(tarEntry)
                                         saveTarIndex = True
@@ -1354,6 +1362,7 @@ def Deduplicate(srcFolder,tarFolder,ask=True,movefile=False):
                                         srcIndex.append(srcEntry)
                                         saveSrcIndex = True
                                 else:
+                                        print("Copying {0}/{1} to {2}/{1}".format(tarRoot,file,srcRoot))
                                         CopyFile(file,tarRoot,srcRoot)
                                         srcEntry = tarEntry
                                         srcEntry[3] = tmpsrcFile
@@ -1380,7 +1389,7 @@ def Deduplicate(srcFolder,tarFolder,ask=True,movefile=False):
                         
                         if Exists(absSrcdir):
                                 # Recursive dedup
-                                Deduplicate(absSrcdir,absTardir,ask,movefile)
+                                MergeFolders(absSrcdir,absTardir,ask,movefile)
                         else:
                                 # copy missing
                                 shutil.copytree(absTardir,absSrcdir,False)
@@ -1569,7 +1578,9 @@ if __name__ == '__main__':
         parser.add_argument("--convertf",help="Convert indexes from this version",type=str)
         parser.add_argument("--convertt",help="Convert indexes to this version",type=str)
         parser.add_argument("--dup",help="Find duplicates",action="store_true")
-        parser.add_argument("--dedup",help="Deduplicate two folders",action="store_true")
+        parser.add_argument("--dedup",help="Deduplicate files/folders in given folder",type=str)
+        parser.add_argument("--merge",help="merge one folder into another folders [merge-target] [folder2]",action="store_true")
+        parser.add_argument("--remove",help="Set removal flag for operations that move or delete files/folders",action="store_true")
         parser.add_argument("-v","--version",help="Show version",action="store_true")
         parser.add_argument("-t","--test",help="Invoke test function",action="store_true")
         parser.add_argument("--cache",help="Create index cache",action="store_true")
@@ -1606,6 +1617,7 @@ if __name__ == '__main__':
         SILENT=args.silent
         SHELLMODE=args.shell
         DEPTH=args.depth
+        REMOVEFLAG = args.remove
 
         # Process Loads of External Data
         DebugMsg("Processing loadables")
@@ -1667,9 +1679,11 @@ if __name__ == '__main__':
         elif args.dup:
                 for folder in args.folders:
                         FindDuplicates(folder)
-        elif args.dedup:
+        elif not args.dedup is None:
+                DeduplicateFolder(args.dedup)
+        elif args.merge:
                 if len(args.folders) > 1:
-                        Deduplicate(args.folders[0],args.folders[1])
+                        MergeFolders(args.folders[0],args.folders[1],REMOVEFLAG)
         elif args.shell:
                 SHELLMODE = True
         elif args.clear:
