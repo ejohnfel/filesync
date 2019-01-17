@@ -933,8 +933,11 @@ def UpdateFolderIndex(folder):
                         # Create existence cache and remove non-existent entries
                         for item in entries:
                                 filepath = item[3]
-                                ts,fsize = GetFileInfo(filepath)
-                                
+                                fsize = 0
+
+                                if Exists(filepath):
+                                        ts,fsize = GetFileInfo(filepath)
+                                        
                                 if Exists(filepath) and fsize > 0:
                                         indexFileEntries.append(filepath)
                                 else:
