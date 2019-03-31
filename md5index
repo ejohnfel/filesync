@@ -307,13 +307,13 @@ def DebugMsg(message,includetimestamp=True):
 # Overwrite : Ask user if overwriting a destination is ok
 def Overwrite(srcEntry,dstEntry):
         DebugMsg("Entering OverWrite")
-        
+
         bname = os.path.basename(srcEntry[3])
         dstdir = os.path.dirname(dstEntry[3])
         srcdir = os.path.dirname(srcEntry[3])
         print("Overwrite {0} in {1} with file from...".format(bname,dstdir))
         response = input("{0} ---> (y/n)? ".format(srcdir))
-        
+
         return (response == "y" or response == "Y")
 
 # GetTimeStamp : Get properly formatted time stamp [COMPLETED/Tested]
@@ -338,7 +338,7 @@ def TmpFilename(targetDir="/tmp", prefix="md5index.tmp"):
 # Touch : Create a file or zero length, or update a mod timestamp
 def Touch(item):
         DebugMsg("Entering Touch({0})".format(item))
-        
+
         data = open(item,"a")
 
         data.close()
@@ -346,7 +346,7 @@ def Touch(item):
 # ReadTest : Read Test or File or Folder
 def ReadTest(item):
         DebugMsg("Entering ReadTest({0})".format(item))
-        
+
         flag = False
 
         try:
@@ -366,7 +366,7 @@ def ReadTest(item):
 # WriteTest : Write Test on File or Folder
 def WriteTest(item):
         DebugMsg("Entering WriteTest({0})".format(item))
-        
+
         flag = False
 
         try:
@@ -389,7 +389,7 @@ def WriteTest(item):
 # CheckAccess : Check access to named item
 def CheckAccess(item,mode="rw"):
         DebugMsg("Entering CheckAccess({0})".format(item))
-        
+
         flag = True
 
         if "r" in mode:
@@ -422,19 +422,19 @@ def CopyFile(fname,srcFolder,targetFolder,remove=False):
 
         if remove and Exists(tfname):
                 os.remove(tfname)
-        
+
         shutil.copy2(os.path.join(srcFolder,fname),targetFolder,follow_symlinks=False)
 
 # MoveFile : Move a file from one folder to another
 def MoveFile(fname,srcFolder,targetFolder,remove=False):
         DebugMsg("Entering MoveFile({0})".format(fname))
-        
+
         fname = os.path.basename(fname)
         tfname = os.path.join(targetFolder,fname)
 
         srcFolder = os.path.dirname(srcFolder)
         targetFolder = os.path.dirname(targetFolder)
-        
+
         if remove and Exists(tfname):
                 os.remove(tfname)
 
@@ -443,7 +443,7 @@ def MoveFile(fname,srcFolder,targetFolder,remove=False):
 # GetFolderContents : Get Folder Contents [COMPLETED/Tested]
 def GetFolderContents(folder):
         DebugMsg("Entering GetFolderContents({0})".format(folder))
-        
+
         folders = [ ]
         files = [ ]
 
@@ -666,7 +666,7 @@ def RemoveIndexes(root,depth=-1):
 # MD5Hash : Get MD5 Hash of file [COMPLETED/Tested]
 def MD5Hash(filename):
         DebugMsg("Entering MD5Hash : {0}".format(filename))
-        
+
         cmd = "md5sum {0}".format(shlex.quote(filename))
 
         output=subprocess.check_output(cmd, shell=True)
@@ -676,9 +676,9 @@ def MD5Hash(filename):
 # HashEntrySet : Create a HashEntry for a list []
 def HashEntry(filename):
         DebugMsg("Entering HashEntry({0})".format(filename))
-        
+
         entry = None
-        
+
         filehash = MD5Hash(filename)
         mod_timestamp, fsize = GetFileInfo(filename)
 
@@ -782,11 +782,14 @@ def LoadIndex(folder):
         target = os.path.join(folder,FOLDERINDEX)
 
         if Exists(target):
+            try:
                 with io.TextIOWrapper(gzip.open(target,"rb")) as index:
                         for line in index:
                                 entry = ParseHashEntry(str.strip(line),folder)
 
                                 entries.append(entry)
+            except:
+                os.remove(target)
 
         return entries
 
@@ -795,7 +798,7 @@ def SaveIndex(entries,folder):
         global FOLDERINDEX
 
         DebugMsg("Entering SaveIndex({0})".format(folder))
-        
+
         target = os.path.join(folder,FOLDERINDEX)
 
         with io.TextIOWrapper(gzip.open(target,"wb")) as index:
@@ -842,7 +845,7 @@ def MkTmpIndex(folder,files,tmpname,mode="w"):
 # MkIndex : Make Index [COMPLETE/Tested]
 def MkIndex(folder,files=None):
         DebugMsg("Entering MkIndex({0})".format(folder))
-        
+
         entries = [ ]
 
         if not CheckAccess(folder):
@@ -869,7 +872,7 @@ def MkIndex(folder,files=None):
 # CreateFolderIndexes : Create Folder Index(es) [COMPLETE/Tested]
 def CreateFolderIndexes(folder,depth=-1):
         DebugMsg("Entering CreateFolderIndexes({0})".format(folder))
-        
+
         folder = os.path.abspath(folder)
 
         if not CheckAccess(folder):
@@ -890,7 +893,7 @@ def CreateFolderIndexes(folder,depth=-1):
 # FindMatchingEntry : Find in memory index entry by file-path
 def FindMatchingEntry(index, filename):
         DebugMsg("Entering Find MatchingEntry({0})".format(filename))
-        
+
         item = None
 
         for entry in index:
@@ -902,7 +905,7 @@ def FindMatchingEntry(index, filename):
 # AddToIndex : Add file into in memory index [COMPLETED]
 def AddToIndex(index,folder,item):
         DebugMsg("Entering AddToIndex({0})".format(item))
-        
+
         abspath = os.path.join(folder,item)
 
         data = HashEntry(abspath)
@@ -929,17 +932,18 @@ def UpdateFolderIndex(folder):
                         changes = False
                         entries = LoadIndex(folder)
                         indexFileEntries = [ ]
-                        
+
                         # Create existence cache and remove non-existent entries
                         for item in entries:
                                 filepath = item[3]
-                                fsize = 0
 
                                 if Exists(filepath):
                                         ts,fsize = GetFileInfo(filepath)
-                                        
-                                if Exists(filepath) and fsize > 0:
-                                        indexFileEntries.append(filepath)
+
+                                        if fsize > 0:
+                                                indexFileEntries.append(filepath)
+                                        else:
+                                                removables.append(item)
                                 else:
                                         removables.append(item)
 
@@ -947,7 +951,7 @@ def UpdateFolderIndex(folder):
                         for item in files:
                                 if not Excluded(item):
                                         base = os.path.basename(item)
-                                        absfolderpath = os.path.abspath(root)
+                                        absfolderpath = os.path.abspath(folder)
 
                                         fp = os.path.join(absfolderpath,base)
 
@@ -958,7 +962,7 @@ def UpdateFolderIndex(folder):
                                                 AddToIndex(entries,absfolderpath,base)
                                         elif fsize > 0:                           # Check for mods
                                                 entry = FindMatchingEntry(entries,fp)
-                
+
                                                 if not (int(entry[1]) == fsize and entry[0] == mod_timestamp):
                                                         changes = True
                                                         entries.remove(entry)
@@ -970,19 +974,19 @@ def UpdateFolderIndex(folder):
                                 entries.remove(entry)
 
                         if changes:
-                                SaveIndex(entries,absfolderpath)
+                                SaveIndex(entries,folder)
 
         return dirs
 
 # UpdateFolderIndexes : Update folder indexes
 def UpdateFolderIndexes(folder,depth=-1):
         DebugMsg("Entering UpdateFolderIndexes({0})".format(folder))
-        
+
         dirs = UpdateFolderIndex(folder)
 
         if depth > -1:
                 depth = depth - 1
-                
+
         for subdir in dirs:
                 UpdateFolderIndexes(subdir, depth)
 
@@ -991,7 +995,7 @@ def CheckIndex(folder):
         global FOLDERINDEX
 
         DebugMsg("Entering CheckIndex({0})".format(folder))
-        
+
         ver = 0
 
         filename = os.path.join(folder,FOLDERINDEX)
@@ -1028,12 +1032,12 @@ def ConvertIndexes(folder,oldver=1,newver=2,depth=-1):
         if not CheckAccess(folder,"r"):
                 ReportFailedAccess(folder)
                 return
-        
+
         root, dirs, files = GetFolderContents(folder)
 
         if not Excluded(root) and (depth > 0 or depth == -1):
                 pth = os.path.join(folder,FOLDERINDEX)
-                
+
                 ver = CheckIndex(root)
 
                 # Currently LoadIndex recognizes v1 and auto-converts to v2
@@ -1041,7 +1045,7 @@ def ConvertIndexes(folder,oldver=1,newver=2,depth=-1):
                         print("Converting {0} to v{1} format".format(pth,newver))
                         index = LoadIndex(folder)
                         SaveIndex(index,folder)
-                        
+
                 if depth > 0:
                         depth = depth - 1
 
@@ -1051,18 +1055,18 @@ def ConvertIndexes(folder,oldver=1,newver=2,depth=-1):
 # ListIndexes : List contents of indexes in tree [COMPLETED/Tested]
 def ListOldIndexes(folder,vers=-1,depth=-1):
         global FOLDERINDEX
-        
+
         DebugMsg("Entering ListOldIndexes({0})".format(folder))
 
         if not CheckAccess(folder,"r"):
                 ReportFailedAccess(folder)
                 return
-        
+
         root, dirs, files = GetFolderContents(folder)
 
         if not Excluded(root) and (depth > 0 or depth == -1):
                 pth = os.path.join(folder,FOLDERINDEX)
-                
+
                 ver = CheckIndex(root)
 
                 if vers == -1 or ver == vers:
@@ -1071,7 +1075,7 @@ def ListOldIndexes(folder,vers=-1,depth=-1):
                         print("Unknown {0}".format(pth))
                 elif ver == -3:
                         print("Empty {0}".format(pth))
-                        
+
                 if depth > 0:
                         depth = depth - 1
 
@@ -1083,7 +1087,7 @@ def ListIndex(folder,tmpfile="",mode="w",masterindex=False):
         global FOLDERINDEX
 
         DebugMsg("Entering ListIndex({0})".format(folder))
-        
+
         index=os.path.join(folder,FOLDERINDEX)
 
         if Exists(index):
@@ -1117,13 +1121,13 @@ def ListIndex(folder,tmpfile="",mode="w",masterindex=False):
                         # If masterindex enabled and not found, add parting marker
                         if masterindex and not found:
                                 with open(tmpname,"a") as mi: mi.write("from end {0}\n".format(folder))
-                        
+
                         if tmpfile == "":
                                 DumpContents(tmpname)
                                 os.remove(tmpname)
 
         DebugMsg("Exitting ListIndex")
-        
+
 # ListIndexes : List contents of indexes in tree [COMPLETED/Tested]
 def ListIndexes(folder,tmpfile="",mode="w",depth=-1,masterindex=False):
         DebugMsg("Entering ListIndexes({0})".format(folder))
@@ -1131,10 +1135,10 @@ def ListIndexes(folder,tmpfile="",mode="w",depth=-1,masterindex=False):
         if not CheckAccess(folder,"r"):
                 ReportFailedAccess(folder)
                 return
-        
+
         root, dirs, files = GetFolderContents(folder)
 
-        if not Excluded(root) and (depth > 0 or depth == -1):        
+        if not Excluded(root) and (depth > 0 or depth == -1):
                 ListIndex(root,tmpfile,mode,masterindex)
 
                 if depth > 0:
@@ -1151,7 +1155,7 @@ def MakeMasterIndex(folder,filename=None,mode="a",depth=-1):
 
         if filename is None or filename == "":
                 filename = CACHE
-        
+
         ListIndexes(folder,filename,mode,depth,masterindex=True)
 
 # RemoveIndexCache : Remove Master Index Cache [COMPLETED/Tested]
@@ -1195,17 +1199,17 @@ def SearchCache(searchExpr,outputFilename=None,escapePattern=False,cachefile=Non
         global CACHE
 
         flag = False
-        
+
         if cachefile is None:
                 cachefile = CACHE
 
         for line in open(cachefile,"r"):
                 line = line.strip()
-                
+
                 if not IsCacheMarker(line):
                         if SearchBuffer(line,searchExpr,escapePattern):
                                 flag = True
-                                
+
                                 if outputFilename is None:
                                         sys.stdout.write("{0}\n".format(line))
                                 else:
@@ -1222,7 +1226,7 @@ def SearchFolderIndexes(folder,searchExpr,outputFilename=None,mode="a",escapePat
                 SearchCache(searchExpr,outputFilename,escapePattern,CACHE)
         elif not Excluded(folder) and (depth > 0 or depth == -1):
                 SearchFolderIndex(folder,searchExpr,outputFilename,mode,escapePattern)
-        
+
                 root, dirs, files = GetFolderContents(folder)
 
                 if depth > 0:
@@ -1236,7 +1240,7 @@ def FindDuplicates(folder,cachename=None,outputFilename=None,mode="a",removeCach
         global CACHE
 
         outputPtr = None
-        
+
         if cachename is None or cachename == "":
                 cachename = CACHE
 
@@ -1244,7 +1248,7 @@ def FindDuplicates(folder,cachename=None,outputFilename=None,mode="a",removeCach
                 outputPtr = sys.stdout
         else:
                 outputPtr = open(outputFilename,mode)
-                
+
         if Exists(cachename) and removeCache:
                 RemoveCacheIndex(cachename)
 
@@ -1254,17 +1258,17 @@ def FindDuplicates(folder,cachename=None,outputFilename=None,mode="a",removeCach
         masterindex = LoadMasterIndex(cachename)
 
         index=0
-                
-        for masterEntry in masterindex: 
+
+        for masterEntry in masterindex:
                 for data in masterindex[index:]:
                         if not data[0] == masterEntry[0] and not data[0] == -1:
                                 if data[3] == masterEntry[3] and not data[4] == masterEntry[4]:
                                         data[0] = -1
                                         src = MasterEntryToHashEntry(masterEntry)
                                         srcStr = HashEntryToString(src)
-                                        
+
                                         outputPtr.write("{0} dup {1}\n".format(srcStr,data[4]))
-                                        
+
                         index=index+1
 
 # DeduplicateFolder : Deduplicate files and folders in a given folder tree
@@ -1274,13 +1278,13 @@ def DeduplicateFolder(folder):
 # MergeFolders : Compare a source folder with a target and copy (or replace) files and folders
 def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
         DebugMsg("Entering MergeFolders({0},{1})".format(srcFolder,tarFolder))
-        
+
         srcFolder = os.path.abspath(srcFolder)
         tarFolder = os.path.abspath(tarFolder)
 
         if Excluded(srcFolder) or Excluded(tarFolder):
                 return
-        
+
         if Exists(srcFolder) and Exists(tarFolder):
                 srcRoot, srcdirs, srcfiles = GetFolderContents(srcFolder)
                 tarRoot, tardirs, tarfiles = GetFolderContents(tarFolder)
@@ -1293,10 +1297,10 @@ def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
 
                 saveSrcIndex = False
                 saveTarIndex = False
-                
+
                 srcIndex = LoadIndex(srcRoot)
                 tarIndex = LoadIndex(tarRoot)
-                
+
                 # Files first
                 # if not exists, move to src
                 # if exists, check m5d
@@ -1305,9 +1309,9 @@ def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
                         if IsZeroSize(file) or Excluded(file):
                                 # Skip zero-length files and Excluded files
                                 continue
-                        
+
                         file = os.path.basename(file)
-                        
+
                         tmpsrcFile = os.path.join(srcRoot,file)
                         tarfile = os.path.join(tarRoot,file)
 
@@ -1326,7 +1330,7 @@ def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
                                 tarIndex.append(tarEntry)
                                 saveTarIndex = True
 
-                        # If Exists, figure out what to do, if not, just copy      
+                        # If Exists, figure out what to do, if not, just copy
                         if Exists(tmpsrcFile):
                                 if srcEntry is None:
                                         print("srcEntry is None {0} - {1}".format(tmpsrcFile,srcRoot))
@@ -1377,11 +1381,11 @@ def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
 
                 if saveTarIndex:
                         SaveIndex(tarIndex,tarRoot)
-                        
+
                 # Garbage collection
                 srcIndex = None
                 tarIndex = None
-                
+
                 # Dirs
                 # if not exists, copy
                 # if exists, recursive dedup...
@@ -1389,7 +1393,7 @@ def MergeFolders(srcFolder,tarFolder,ask=True,movefile=False):
                         tdir = os.path.basename(dir)
                         absSrcdir = os.path.join(srcRoot,tdir)
                         absTardir = os.path.join(tarRoot,tdir)
-                        
+
                         if Exists(absSrcdir):
                                 # Recursive dedup
                                 MergeFolders(absSrcdir,absTardir,ask,movefile)
@@ -1443,7 +1447,7 @@ function CopyToFolder()
 # InteractiveShell : Interactive Processing Shell
 def InteractiveShell():
         IndexShell().cmdloop()
-        
+
         while False:
                 sys.stdout.write("> ")
                 cmd = sys.stdin.readline().strip()
@@ -1478,7 +1482,7 @@ def InteractiveShell():
                         ShellUsage()
                 elif args[0] == "clear":
                         subprocess.check_output("clear", shell=True)
-                        
+
 '''
 # Interactive Index Shell
 function InteractiveShell()
@@ -1537,7 +1541,7 @@ function InteractiveShell()
 # Start Debug Log [COMPLETED/Tested]
 def StartDebug():
         global DEBUGFILE
-                
+
         with open(DEBUGFILE,"a") as log:
                 log.write("md5index called on {0}\n".format(GetTimeStamp()))
 
@@ -1553,11 +1557,11 @@ def CloseDebug():
 # Usage : TestFunc()
 def TestFunc(argument):
         global FOLDERINDEX, excludes, patterns, DEBUGFILE, CACHE
-        
+
         print("Running Tests")
 
         # Rerun index creation, update and masterindex tests
-        
+
         print("Tests completed")
 
 #
@@ -1639,7 +1643,7 @@ if __name__ == '__main__':
                 CONVERTFROM=int(args.convertf)
         if not args.convertt is None:
                 CONVERTTO=int(args.convertt)
-                
+
 
         DebugMsg("Parsing action flags")
 
@@ -1702,4 +1706,3 @@ if __name__ == '__main__':
         if DEBUG:
                 DebugMsg("Close Debug Log")
                 CloseDebug()
-
