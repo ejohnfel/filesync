@@ -729,7 +729,7 @@ def ParseHashEntry(hashEntry,folder):
         # 2018-09-24 11:40:49.954439 783 e532987abda7765c8620875d439dce7b /srv/storage/projects/scripts/filesync/README.md
         # Old format : e532987abda7765c8620875d439dce7b /srv/storage/projects/scripts/filesync/README.md
 
-        # maxsplit = 4, because fnames make contain white space. This will parse date,time,size,hash and dump the remainder as one string
+        # maxsplit = 4, because fnames may contain white space. This will parse date,time,size,hash and dump the remainder as one string
         data = ""
 
         # Check for old Entry
