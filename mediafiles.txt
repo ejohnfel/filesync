@@ -1,0 +1,1 @@
+^[^\.]+\.(jpg|jpeg|png|gif|mp3|mp4|zip|avi|bmp|flv|jpg\+|jpg_large|mov|mpg|mpeg|scn|swf|wdp|webp|wmv)$

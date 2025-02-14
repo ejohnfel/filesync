@@ -1,0 +1,10 @@
+Python Redis Lib: redis-py
+
+import redis
+
+Insert set
+
+r = redis.Redis(host='server-host', port=6379, db=[db-num])
+
+r.sismember(hash,path)
+r.sadd(hash, path)
